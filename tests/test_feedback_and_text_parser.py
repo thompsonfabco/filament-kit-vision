@@ -16,6 +16,7 @@ from PIL import Image
 from filament_kit_vision.cpu_tier.text_parser_io import load_text_parser_npz
 from filament_kit_vision.service.daemon import start_daemon
 from filament_kit_vision.service.feedback import ingest_feedback_bundles
+from filament_kit_vision.service.updater import run_one_click_update
 from filament_kit_vision.xml_io import load_training_samples_with_feedback
 
 
@@ -169,6 +170,27 @@ def test_feedback_http_roundtrip_and_ingest(tmp_path: Path) -> None:
         )
         assert len(loaded) == 2
         assert loaded[0].item.vendor == "Bambu Lab"
+
+        # Test one-click updater: ingest from incoming dir, archive zip, respect min_new_samples gate
+        inc_dir = tmp_path / "incoming"
+        inc_dir.mkdir()
+        (inc_dir / "filament-feedback-batch1.zip").write_bytes(rx_zip.read_bytes())
+        upd = run_one_click_update(
+            source_dirs=[inc_dir],
+            min_new_samples=10,
+            force=False,
+            skip_train=True,
+            skip_benchmark=True,
+            archive_dir=tmp_path / "archived",
+            feedback_xml=tmp_path / "upd_fb.xml",
+            feedback_images_dir=tmp_path / "upd_imgs",
+        )
+        assert upd["zips_found"] == 1
+        assert upd["new_feedback_samples"] == 1
+        assert upd["trained"] is False
+        assert "skipped_reason" in upd
+        assert (tmp_path / "archived" / "filament-feedback-batch1.zip").is_file()
+        assert not (inc_dir / "filament-feedback-batch1.zip").exists()
     finally:
         srv.shutdown()
         srv.server_close()

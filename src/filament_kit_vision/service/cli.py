@@ -18,6 +18,7 @@ from .daemon import (
     save_service_config,
 )
 from .feedback import ingest_feedback_bundles
+from .updater import run_one_click_update
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -71,6 +72,19 @@ def main(argv: list[str] | None = None) -> int:
     # ingest-feedback
     p_ingest = sub.add_parser("ingest-feedback", help="Import downloaded user-feedback .zip bundles into verified training XML")
     p_ingest.add_argument("source", help="Path to a feedback .zip file or directory of .zip files")
+
+    # update-models (one-click training update)
+    p_upd = sub.add_parser(
+        "update-models",
+        help="One-click update: ingest Drive feedback zips, check batch threshold, retrain, and benchmark",
+    )
+    p_upd.add_argument("--source", action="append", default=None, help="Folder(s) or .zip(s) to ingest (default: data/feedback_incoming + Downloads)")
+    p_upd.add_argument("--min-new-samples", type=int, default=10, help="Minimum new feedback samples before retraining (default: 10)")
+    p_upd.add_argument("--force", action="store_true", help="Retrain even if below --min-new-samples")
+    p_upd.add_argument("--tier", choices=["cpu", "gpu", "all"], default="all")
+    p_upd.add_argument("--skip-benchmark", action="store_true")
+    p_upd.add_argument("--release-version", default=None, help="Optionally build & sign a release after training")
+    p_upd.add_argument("--key-file", default=None, help="Ed25519 PEM private key for --release-version")
 
     args = parser.parse_args(argv)
     cfg = load_service_config()
@@ -169,6 +183,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "ingest-feedback":
         summary = ingest_feedback_bundles(args.source)
+        print(json.dumps(summary, indent=2))
+        return 0
+
+    if args.cmd == "update-models":
+        summary = run_one_click_update(
+            source_dirs=args.source,
+            min_new_samples=args.min_new_samples,
+            force=args.force,
+            tier=args.tier,
+            skip_benchmark=args.skip_benchmark,
+            release_version=args.release_version,
+            key_file=args.key_file,
+        )
         print(json.dumps(summary, indent=2))
         return 0
 
