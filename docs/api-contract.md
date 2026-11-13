@@ -42,7 +42,7 @@ Response `200`:
 {
   "service": "filament-kit-vision",
   "api_version": "1.0",
-  "module_version": "0.1.1",
+  "module_version": "0.2.0",
   "status": "ok",
   "default_tier": "auto",
   "tiers": {
@@ -128,7 +128,7 @@ Response `200`:
   "questions": ["Is the colour Charcoal or Black?"],
   "reader": {
     "service": "filament-kit-vision",
-    "module_version": "0.1.1",
+    "module_version": "0.2.0",
     "tier_used": "cpu",
     "escalated": false,
     "fallback_reason": null,
@@ -231,6 +231,16 @@ Kit maps transport failures (connection refused, timeout) to its existing `ReadE
 The module ships `tests/contract/` (planned) runnable against any running instance:
 `python -m pytest tests/contract --base-url http://127.0.0.1:7915 [--token-file PATH]`, using bundled synthetic
 images only (no owner or web photos). The kit's suite uses its own fake reader that satisfies the same tests.
+
+## Opt-in Training Feedback Endpoints (`api_version: "1.1"`, additive)
+
+Disabled by default (`feedback_opt_in = false` in `service_config.xml`). When disabled, `POST /v1/feedback` and `POST /v1/feedback/submit` return `403 feedback_disabled`.
+
+- `POST /v1/feedback` — Queue a user-corrected spool (`images_b64`, `predicted`, `corrected`, optional `note`). Strips all EXIF/ICC/GPS metadata, resizes images to `max_side <= 1024`, and writes `data/feedback_queue/pending_feedback.xml`.
+- `GET /v1/feedback` — Return `opt_in`, `endpoint_configured`, `count`, `bundle_mb`, and queued entry summaries.
+- `DELETE /v1/feedback/<id>` — Remove a queued entry and its JPEG files before upload.
+- `GET /v1/feedback/bundle.zip` — Download the sanitized `.zip` archive locally for inspection or manual sharing.
+- `POST /v1/feedback/submit` — Package the queue into a `.zip` (`<= 25 MB`), POST it to the configured write-only Google Apps Script endpoint (`feedback_endpoint`), and clear the local queue upon `{"ok": true}`.
 
 ## Module changes needed to meet this draft (current daemon vs contract)
 

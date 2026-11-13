@@ -415,7 +415,7 @@ class IntakeReadResult:
             "questions": list(self.questions),
             "reader": {
                 "service": "filament-kit-vision",
-                "module_version": "0.1.1",
+                "module_version": "0.2.0",
                 "tier_used": "gpu" if "gpu" in self.tier.lower() else "cpu",
                 "escalated": escalated,
                 "fallback_reason": fallback_reason,
@@ -519,3 +519,18 @@ def save_dataset_xml(path: str | Path, samples: list[AnnotatedSample], split_nam
 def load_dataset_xml(path: str | Path) -> list[AnnotatedSample]:
     root = parse_xml_file(path)
     return [AnnotatedSample.from_element(el) for el in root.findall("sample")]
+
+
+def load_training_samples_with_feedback(
+    train_xml: str | Path,
+    feedback_xml: str | Path = DATA_DIR / "annotations" / "feedback_verified.xml",
+    feedback_weight: int = 2,
+) -> list[AnnotatedSample]:
+    """Load train_xml and append verified user-feedback samples up-weighted by feedback_weight."""
+    samples = load_dataset_xml(train_xml) if Path(train_xml).is_file() else []
+    fb_path = Path(feedback_xml)
+    if fb_path.is_file():
+        fb_samples = load_dataset_xml(fb_path)
+        for _ in range(max(1, feedback_weight)):
+            samples.extend(fb_samples)
+    return samples

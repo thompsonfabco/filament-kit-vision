@@ -6,13 +6,13 @@ import xml.etree.ElementTree as StdET
 from pathlib import Path
 from typing import Any
 
-import joblib
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import SGDClassifier
 from sklearn.pipeline import FeatureUnion, Pipeline
 
 from ..catalog.matcher import CatalogMatcher
-from ..xml_io import DATA_DIR, PROJECT_ROOT, load_dataset_xml, write_xml_atomic
+from ..xml_io import DATA_DIR, PROJECT_ROOT, load_training_samples_with_feedback, write_xml_atomic
+from .text_parser_io import save_text_parser_npz
 
 
 def _degrade_ocr_text(text: str, rng: random.Random) -> str:
@@ -30,7 +30,7 @@ def _degrade_ocr_text(text: str, rng: random.Random) -> str:
 
 def train_and_export_text_parser(
     train_xml: str | Path = DATA_DIR / "annotations" / "train_split.xml",
-    output_joblib: str | Path = PROJECT_ROOT / "models" / "cpu" / "text_parser.joblib",
+    output_npz: str | Path = PROJECT_ROOT / "models" / "cpu" / "text_parser.npz",
     seed: int = 42,
 ) -> dict[str, Any]:
     """Train lightweight character + word n-gram classifiers for Vendor, Material, and Product Line from noisy OCR."""
@@ -62,21 +62,20 @@ def train_and_export_text_parser(
             texts_line.append(noisy)
             labels_line.append(prod.line)
 
-    # 2. Include real & synthetic dataset OCR lines
-    if Path(train_xml).is_file():
-        for s in load_dataset_xml(train_xml):
-            if not s.ocr_lines:
-                continue
-            joined = " | ".join(s.ocr_lines)
-            for _ in range(4):
-                noisy = _degrade_ocr_text(joined, rng)
-                if s.item.vendor != "Unknown":
-                    texts_vendor.append(noisy)
-                    labels_vendor.append(s.item.vendor)
-                texts_mat.append(noisy)
-                labels_mat.append(s.item.material)
-                texts_line.append(noisy)
-                labels_line.append(s.item.line)
+    # 2. Include real & synthetic dataset OCR lines (+ 2x up-weighted verified feedback)
+    for s in load_training_samples_with_feedback(train_xml):
+        if not s.ocr_lines:
+            continue
+        joined = " | ".join(s.ocr_lines)
+        for _ in range(4):
+            noisy = _degrade_ocr_text(joined, rng)
+            if s.item.vendor != "Unknown":
+                texts_vendor.append(noisy)
+                labels_vendor.append(s.item.vendor)
+            texts_mat.append(noisy)
+            labels_mat.append(s.item.material)
+            texts_line.append(noisy)
+            labels_line.append(s.item.line)
 
     def _make_pipe(alpha_val: float = 1e-5) -> Pipeline:
         feats = FeatureUnion(
@@ -101,14 +100,14 @@ def train_and_export_text_parser(
     line_pipe = _make_pipe(alpha_val=2e-5)
     line_pipe.fit(texts_line, labels_line)
 
-    out_path = Path(output_joblib)
+    out_path = Path(output_npz)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     bundle = {
         "vendor_pipe": vendor_pipe,
         "material_pipe": mat_pipe,
         "line_pipe": line_pipe,
     }
-    joblib.dump(bundle, out_path, compress=3)
+    save_text_parser_npz(bundle, out_path)
 
     meta_el = StdET.Element(
         "text-parser-meta",

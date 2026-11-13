@@ -3,7 +3,7 @@
 
 Produces:
   - filament-kit-vision-<version>.tar.gz (plain files/dirs only, no symlinks/hardlinks)
-  - CPU model assets (detector_rfdetr_n.onnx, visual_multihead.onnx, text_parser.joblib)
+  - CPU model assets (detector_rfdetr_n.onnx, visual_multihead.onnx, text_parser.npz)
   - GPU LoRA adapter tarball (qwen25_vl_7b_filament_lora.tar.gz)
   - manifest.json
   - SHA256SUMS and SHA256SUMS.sig (signed via tools/sign_release.py)
@@ -19,7 +19,7 @@ from pathlib import Path
 
 from sign_release import ROOT, generate_sha256sums, sign
 
-VERSION = "0.1.1"
+VERSION = "0.2.0"
 API_VERSION = "1.0"
 
 
@@ -56,7 +56,7 @@ def build_release(version: str = VERSION, key_file: Path | None = None) -> Path:
     cpu_assets = [
         "detector_rfdetr_n.onnx",
         "visual_multihead.onnx",
-        "text_parser.joblib",
+        "text_parser.npz",
     ]
     for name in cpu_assets:
         src = ROOT / "models" / "cpu" / name

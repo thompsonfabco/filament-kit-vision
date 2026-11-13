@@ -10,7 +10,7 @@ import torch
 from PIL import Image
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
-from ..xml_io import DATA_DIR, PROJECT_ROOT, AnnotatedSample, IntakeReadResult, load_dataset_xml, write_xml_atomic
+from ..xml_io import DATA_DIR, PROJECT_ROOT, AnnotatedSample, IntakeReadResult, load_dataset_xml, load_training_samples_with_feedback, write_xml_atomic
 from .prompts import SYSTEM_PROMPT, USER_PROMPT
 
 
@@ -45,7 +45,7 @@ def train_gpu_vlm_lora(
     random.seed(seed)
     torch.manual_seed(seed)
 
-    train_samples = [s for s in load_dataset_xml(train_xml) if (PROJECT_ROOT / s.image_path).is_file()]
+    train_samples = [s for s in load_training_samples_with_feedback(train_xml) if (PROJECT_ROOT / s.image_path).is_file()]
     val_samples = [s for s in load_dataset_xml(val_xml) if (PROJECT_ROOT / s.image_path).is_file()]
 
     # Prioritize real harvested samples + diverse synthetic samples

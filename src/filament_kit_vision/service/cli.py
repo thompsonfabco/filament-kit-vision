@@ -17,6 +17,7 @@ from .daemon import (
     run_daemon_forever,
     save_service_config,
 )
+from .feedback import ingest_feedback_bundles
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,6 +45,8 @@ def main(argv: list[str] | None = None) -> int:
     p_cfg.add_argument("--host", default=None)
     p_cfg.add_argument("--port", type=int, default=None)
     p_cfg.add_argument("--idle-unload-seconds", type=int, default=None)
+    p_cfg.add_argument("--feedback-opt-in", choices=["true", "false"], default=None)
+    p_cfg.add_argument("--feedback-endpoint", default=None)
 
     # status
     sub.add_parser("status", help="Check local daemon health, trained ONNX/VLM weights, and GPU status")
@@ -65,6 +68,10 @@ def main(argv: list[str] | None = None) -> int:
     p_play.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     p_play.add_argument("--port", type=int, default=7861, help="Bind port (default: 7861)")
 
+    # ingest-feedback
+    p_ingest = sub.add_parser("ingest-feedback", help="Import downloaded user-feedback .zip bundles into verified training XML")
+    p_ingest.add_argument("source", help="Path to a feedback .zip file or directory of .zip files")
+
     args = parser.parse_args(argv)
     cfg = load_service_config()
 
@@ -72,7 +79,15 @@ def main(argv: list[str] | None = None) -> int:
         host = args.host or cfg.get("host", DEFAULT_HOST)
         port = args.port or int(cfg.get("port", DEFAULT_PORT))
         tier = args.tier or cfg.get("tier", "auto")
-        run_daemon_forever(host=host, port=port, tier=tier, idle_unload_seconds=float(cfg.get("idle_unload_seconds", 300)))
+        run_daemon_forever(
+            host=host,
+            port=port,
+            tier=tier,
+            idle_unload_seconds=float(cfg.get("idle_unload_seconds", 300)),
+            auth_token=str(cfg.get("token", "")),
+            feedback_opt_in=bool(cfg.get("feedback_opt_in", False)),
+            feedback_endpoint=str(cfg.get("feedback_endpoint", "")),
+        )
         return 0
 
     if args.cmd == "predict":
@@ -97,6 +112,12 @@ def main(argv: list[str] | None = None) -> int:
             changed = True
         if args.idle_unload_seconds is not None:
             cfg["idle_unload_seconds"] = args.idle_unload_seconds
+            changed = True
+        if args.feedback_opt_in is not None:
+            cfg["feedback_opt_in"] = args.feedback_opt_in == "true"
+            changed = True
+        if args.feedback_endpoint is not None:
+            cfg["feedback_endpoint"] = args.feedback_endpoint.strip()
             changed = True
         out_path = save_service_config(cfg)
         print(f"{'Updated' if changed else 'Current'} config ({out_path}): {cfg}")
@@ -144,6 +165,11 @@ def main(argv: list[str] | None = None) -> int:
         from .playground_ui import run_playground_server
 
         run_playground_server(host=args.host, port=args.port)
+        return 0
+
+    if args.cmd == "ingest-feedback":
+        summary = ingest_feedback_bundles(args.source)
+        print(json.dumps(summary, indent=2))
         return 0
 
     return 0

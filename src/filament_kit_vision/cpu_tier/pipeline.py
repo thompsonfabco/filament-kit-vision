@@ -8,11 +8,11 @@ from pathlib import Path
 from typing import Any
 
 import cv2
-import joblib
 import numpy as np
 import onnxruntime as ort
 
 from .ocr_helper import create_rapidocr, run_rapidocr
+from .text_parser_io import load_text_parser_npz
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ class CPUHybridPipeline:
         self,
         detector_onnx: str | Path = PROJECT_ROOT / "models" / "cpu" / "detector_rfdetr_n.onnx",
         visual_onnx: str | Path = PROJECT_ROOT / "models" / "cpu" / "visual_multihead.onnx",
-        text_parser_joblib: str | Path = PROJECT_ROOT / "models" / "cpu" / "text_parser.joblib",
+        text_parser_path: str | Path = PROJECT_ROOT / "models" / "cpu" / "text_parser.npz",
     ):
         self.matcher = CatalogMatcher()
         self.providers = select_onnx_providers()
@@ -93,8 +93,9 @@ class CPUHybridPipeline:
         )
 
         self.text_parser: dict[str, Any] | None = None
-        if Path(text_parser_joblib).is_file():
-            self.text_parser = joblib.load(text_parser_joblib)
+        tp_path = Path(text_parser_path)
+        if tp_path.is_file():
+            self.text_parser = load_text_parser_npz(tp_path)
 
     def _detect_regions(self, img_bgr: np.ndarray, conf_thresh: float = 0.35) -> list[BoundingBox]:
         """Run RF-DETR-N ONNX detector to locate box_label, spool_label, spool_windings, and spool_flange."""

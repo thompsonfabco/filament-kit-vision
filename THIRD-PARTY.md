@@ -13,7 +13,7 @@ All bundled model weights, upstream base models, inference runtimes, and depende
 | **Spool & Label Region Detector** | RF-DETR Nano (`rf-detr-n`) | Roboflow (`github.com/roboflow/rf-detr`) | **Apache-2.0** (`https://www.apache.org/licenses/LICENSE-2.0`) | Bundled ONNX export in release asset |
 | **Multi-Head Visual Classifier** | MobileNetV3-Small | PyTorch / torchvision (`github.com/pytorch/vision`) | **Apache-2.0** / **BSD-3-Clause** | Bundled ONNX export in release asset |
 | **Spool & Box OCR** | RapidOCR (`rapidocr`) | RapidAI (`github.com/RapidAI/RapidOCR`) | **Apache-2.0** (`https://www.apache.org/licenses/LICENSE-2.0`) | Bundled ONNX models via pip dependency |
-| **Text-to-Spoolman Parser** | TF-IDF + Log-Loss Linear | Scikit-Learn / joblib (`scikit-learn.org`) | **BSD-3-Clause** | Trained weights bundled in release asset |
+| **Text-to-Spoolman Parser** | TF-IDF + Log-Loss Linear | Scikit-Learn (`scikit-learn.org`) / NumPy `.npz` | **BSD-3-Clause** | Pickle-free weights bundled in release asset |
 | **GPU Vision-Language Model** | `Qwen/Qwen2.5-VL-7B-Instruct` | Alibaba Cloud Qwen Team (`huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct`) | **Apache-2.0** (`https://www.apache.org/licenses/LICENSE-2.0`) | Base model downloaded directly from Hugging Face at install time; fine-tuned LoRA adapter bundled in optional release asset |
 
 *(Note: No AGPL-3.0 or non-commercial research weights are shipped or required.)*
@@ -26,8 +26,7 @@ All bundled model weights, upstream base models, inference runtimes, and depende
 |---|---|---|
 | `onnxruntime` | **MIT** | CPU inference for region detector, visual classifier, and RapidOCR |
 | `rapidocr` | **Apache-2.0** | Multi-angle text recognition on box labels and spool stickers |
-| `scikit-learn` | **BSD-3-Clause** | Text parser and feature extraction |
-| `joblib` | **BSD-3-Clause** | Serialized parser pipeline |
+| `scikit-learn` | **BSD-3-Clause** | Text parser training and feature extraction |
 | `rapidfuzz` | **MIT** | Fast C++ fuzzy matching against catalog vendors and lines |
 | `defusedxml` | **Python Software Foundation (PSF)** | XML parsing and serialization |
 | `pillow` | **Historical Permission Notice and Disclaimer (HPND)** | Image decoding and color space transforms |

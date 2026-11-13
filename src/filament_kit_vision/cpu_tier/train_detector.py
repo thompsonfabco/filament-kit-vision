@@ -8,7 +8,7 @@ from typing import Any
 
 from PIL import Image
 
-from ..xml_io import DATA_DIR, PROJECT_ROOT, AnnotatedSample, load_dataset_xml
+from ..xml_io import DATA_DIR, PROJECT_ROOT, AnnotatedSample, load_dataset_xml, load_training_samples_with_feedback
 
 DETECTOR_CLASSES = ["box_label", "spool_label", "spool_windings", "spool_flange"]
 CLASS_TO_ID = {name: idx for idx, name in enumerate(DETECTOR_CLASSES)}
@@ -91,7 +91,7 @@ def train_and_export_detector(
     from rfdetr import RFDETRNano
 
     coco_root = DATA_DIR / "rfdetr_build"
-    train_samples = load_dataset_xml(train_xml)
+    train_samples = load_training_samples_with_feedback(train_xml)
     val_samples = load_dataset_xml(val_xml)
 
     n_tr = _prepare_coco_split(train_samples, coco_root / "train")

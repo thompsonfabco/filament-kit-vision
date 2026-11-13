@@ -32,15 +32,20 @@ from ..xml_io import (
     to_xml_string,
     write_xml_atomic,
 )
+from .feedback import DEFAULT_FEEDBACK_DIR, FeedbackQueue
 
 log = logging.getLogger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 7915
 DEFAULT_SERVICE_CONFIG_XML = CONFIGS_DIR / "service_config.xml"
+DEFAULT_FEEDBACK_ENDPOINT = (
+    "https://script.google.com/macros/s/"
+    "AKfycbzfxi1uUckO6BXKNdTZi9R-BfQyLpSa8cTWyCTBL-o1MGXyL89V1qLS-88ouOPbcep1/exec"
+)
 
-MODULE_VERSION = "0.1.1"
-API_VERSION = "1.0"
+MODULE_VERSION = "0.2.0"
+API_VERSION = "1.1"
 MAX_PHOTOS = 8
 MAX_PHOTO_BYTES = 20 * 1024 * 1024  # 20 MB
 MAX_BODY_BYTES = 64 * 1024 * 1024   # 64 MB
@@ -58,6 +63,7 @@ class BusyError(Exception):
 
 def load_service_config(path: str | Path = DEFAULT_SERVICE_CONFIG_XML) -> dict[str, Any]:
     p = Path(path)
+    default_endpoint = os.environ.get("FILAMENT_KIT_VISION_FEEDBACK_ENDPOINT", DEFAULT_FEEDBACK_ENDPOINT)
     if not p.is_file():
         return {
             "tier": "auto",
@@ -65,6 +71,8 @@ def load_service_config(path: str | Path = DEFAULT_SERVICE_CONFIG_XML) -> dict[s
             "port": DEFAULT_PORT,
             "idle_unload_seconds": 300,
             "token": os.environ.get("FILAMENT_KIT_VISION_TOKEN", ""),
+            "feedback_opt_in": False,
+            "feedback_endpoint": default_endpoint,
         }
     try:
         root = parse_xml_file(p)
@@ -74,6 +82,8 @@ def load_service_config(path: str | Path = DEFAULT_SERVICE_CONFIG_XML) -> dict[s
             "port": int(root.attrib.get("port", str(DEFAULT_PORT))),
             "idle_unload_seconds": int(root.attrib.get("idle-unload-seconds", "300")),
             "token": root.attrib.get("token", os.environ.get("FILAMENT_KIT_VISION_TOKEN", "")),
+            "feedback_opt_in": root.attrib.get("feedback-opt-in", "false").lower() == "true",
+            "feedback_endpoint": root.attrib.get("feedback-endpoint", default_endpoint),
         }
     except Exception:
         return {
@@ -82,6 +92,8 @@ def load_service_config(path: str | Path = DEFAULT_SERVICE_CONFIG_XML) -> dict[s
             "port": DEFAULT_PORT,
             "idle_unload_seconds": 300,
             "token": os.environ.get("FILAMENT_KIT_VISION_TOKEN", ""),
+            "feedback_opt_in": False,
+            "feedback_endpoint": default_endpoint,
         }
 
 
@@ -92,9 +104,12 @@ def save_service_config(cfg: dict[str, Any], path: str | Path = DEFAULT_SERVICE_
         "host": str(cfg.get("host", DEFAULT_HOST)),
         "port": str(cfg.get("port", DEFAULT_PORT)),
         "idle-unload-seconds": str(cfg.get("idle_unload_seconds", 300)),
+        "feedback-opt-in": "true" if cfg.get("feedback_opt_in") else "false",
     }
     if cfg.get("token"):
         attrs["token"] = str(cfg["token"])
+    if cfg.get("feedback_endpoint"):
+        attrs["feedback-endpoint"] = str(cfg["feedback_endpoint"])
     root = StdET.Element("service-config", attrib=attrs)
     return write_xml_atomic(path, root)
 
@@ -107,6 +122,9 @@ class FilamentRecognizer:
         default_tier: str = "auto",
         idle_unload_seconds: float = 300.0,
         auth_token: str = "",
+        feedback_opt_in: bool = False,
+        feedback_endpoint: str = DEFAULT_FEEDBACK_ENDPOINT,
+        feedback_dir: str | Path = DEFAULT_FEEDBACK_DIR,
     ):
         self.default_tier = default_tier.lower()
         self.cpu_pipeline = CPUHybridPipeline()
@@ -114,6 +132,9 @@ class FilamentRecognizer:
         self._gpu_pipeline: GPUVLMPipeline | None = None
         self.idle_unload_seconds = idle_unload_seconds
         self.auth_token = auth_token.strip()
+        self.feedback_opt_in = bool(feedback_opt_in)
+        self.feedback_endpoint = feedback_endpoint.strip()
+        self.feedback_queue = FeedbackQueue(queue_dir=feedback_dir)
         self._gpu_available: bool | None = None
         self.started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         self.last_read_at: str | None = None
@@ -375,11 +396,62 @@ class _DaemonRequestHandler(BaseHTTPRequestHandler):
             self._send_json(200, payload)
             return
 
+        if parsed.path in ("/v1/feedback", "/feedback"):
+            if not self._check_auth():
+                self._send_error(401, "unauthorized", "Missing or invalid bearer token")
+                return
+            st = self.recognizer.feedback_queue.status()
+            self._send_json(
+                200,
+                {
+                    "api_version": API_VERSION,
+                    "opt_in": self.recognizer.feedback_opt_in,
+                    "endpoint_configured": bool(self.recognizer.feedback_endpoint),
+                    **st,
+                },
+            )
+            return
+
+        if parsed.path in ("/v1/feedback/bundle.zip", "/feedback/bundle.zip"):
+            if not self._check_auth():
+                self._send_error(401, "unauthorized", "Missing or invalid bearer token")
+                return
+            try:
+                zip_bytes = self.recognizer.feedback_queue.build_bundle_zip()
+            except ValueError as exc:
+                self._send_error(404, "empty_feedback_queue", str(exc))
+                return
+            self._send_raw(
+                200,
+                zip_bytes,
+                "application/zip",
+                extra_headers={"Content-Disposition": 'attachment; filename="filament-feedback-bundle.zip"'},
+            )
+            return
+
+        self._send_error(404, "not_found", f"Unknown route: {parsed.path}")
+
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/v1/feedback/") or parsed.path.startswith("/feedback/"):
+            if not self._check_auth():
+                self._send_error(401, "unauthorized", "Missing or invalid bearer token")
+                return
+            entry_id = parsed.path.rsplit("/", 1)[-1].strip()
+            if not entry_id:
+                self._send_error(400, "bad_request", "Missing feedback entry id")
+                return
+            if not self.recognizer.feedback_queue.delete(entry_id):
+                self._send_error(404, "not_found", f"Feedback entry not found: {entry_id}")
+                return
+            st = self.recognizer.feedback_queue.status()
+            self._send_json(200, {"api_version": API_VERSION, "ok": True, "deleted_id": entry_id, "queued_count": st["count"], "bundle_mb": st["bundle_mb"]})
+            return
         self._send_error(404, "not_found", f"Unknown route: {parsed.path}")
 
     def do_POST(self) -> None:
         parsed = urlparse(self.path)
-        if parsed.path not in ("/v1/read", "/read", "/v1/revise", "/revise"):
+        if parsed.path not in ("/v1/read", "/read", "/v1/revise", "/revise", "/v1/feedback", "/feedback", "/v1/feedback/submit", "/feedback/submit"):
             self._send_error(404, "not_found", f"Unknown route: {parsed.path}")
             return
 
@@ -415,6 +487,42 @@ class _DaemonRequestHandler(BaseHTTPRequestHandler):
                 return
         except ValueError:
             self._send_error(400, "bad_request", f"Invalid api_version format: {req_api_ver}")
+            return
+
+        # Handle POST /v1/feedback
+        if parsed.path in ("/v1/feedback", "/feedback"):
+            if not self.recognizer.feedback_opt_in:
+                self._send_error(403, "feedback_disabled", "Training feedback opt-in is disabled")
+                return
+            try:
+                res = self.recognizer.feedback_queue.enqueue(
+                    images_b64=body.get("images_b64") or [],
+                    predicted=body.get("predicted") or {},
+                    corrected=body.get("corrected") or {},
+                    note=str(body.get("note") or ""),
+                )
+                self._send_json(200, {"api_version": API_VERSION, **res})
+            except ValueError as exc:
+                self._send_error(400, "bad_request", str(exc))
+            except Exception as exc:
+                log.exception("Feedback enqueue failed")
+                self._send_error(500, "feedback_failed", str(exc))
+            return
+
+        # Handle POST /v1/feedback/submit
+        if parsed.path in ("/v1/feedback/submit", "/feedback/submit"):
+            if not self.recognizer.feedback_opt_in:
+                self._send_error(403, "feedback_disabled", "Training feedback opt-in is disabled")
+                return
+            endpoint = str(body.get("endpoint") or self.recognizer.feedback_endpoint or "").strip()
+            try:
+                res = self.recognizer.feedback_queue.submit(endpoint_url=endpoint)
+                self._send_json(200, {"api_version": API_VERSION, **res})
+            except ValueError as exc:
+                self._send_error(400, "bad_request", str(exc))
+            except Exception as exc:
+                log.exception("Feedback submit failed")
+                self._send_error(502, "feedback_upload_failed", str(exc))
             return
 
         # Handle POST /v1/revise
@@ -507,12 +615,18 @@ def start_daemon(
     tier: str = "auto",
     idle_unload_seconds: float = 300.0,
     auth_token: str = "",
+    feedback_opt_in: bool = False,
+    feedback_endpoint: str = DEFAULT_FEEDBACK_ENDPOINT,
+    feedback_dir: str | Path = DEFAULT_FEEDBACK_DIR,
 ) -> ThreadingHTTPServer:
     """Create and return a configured ThreadingHTTPServer for filament-kit-vision."""
     recognizer = FilamentRecognizer(
         default_tier=tier,
         idle_unload_seconds=idle_unload_seconds,
         auth_token=auth_token,
+        feedback_opt_in=feedback_opt_in,
+        feedback_endpoint=feedback_endpoint,
+        feedback_dir=feedback_dir,
     )
 
     class Handler(_DaemonRequestHandler):
@@ -529,6 +643,9 @@ def run_daemon_forever(
     tier: str = "auto",
     idle_unload_seconds: float = 300.0,
     auth_token: str = "",
+    feedback_opt_in: bool = False,
+    feedback_endpoint: str = DEFAULT_FEEDBACK_ENDPOINT,
+    feedback_dir: str | Path = DEFAULT_FEEDBACK_DIR,
 ) -> None:
     server = start_daemon(
         host=host,
@@ -536,6 +653,9 @@ def run_daemon_forever(
         tier=tier,
         idle_unload_seconds=idle_unload_seconds,
         auth_token=auth_token,
+        feedback_opt_in=feedback_opt_in,
+        feedback_endpoint=feedback_endpoint,
+        feedback_dir=feedback_dir,
     )
 
     def _sweeper() -> None:

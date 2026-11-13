@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from ..xml_io import DATA_DIR, PROJECT_ROOT, AnnotatedSample, load_dataset_xml, parse_xml_file, write_xml_atomic
+from ..xml_io import DATA_DIR, PROJECT_ROOT, AnnotatedSample, load_dataset_xml, load_training_samples_with_feedback, parse_xml_file, write_xml_atomic
 from .labels import COLOR_FAMILIES, SEALED_STATES, VISUAL_FINISHES, VISUAL_VENDORS
 
 
@@ -120,7 +120,7 @@ def train_and_export_visual_classifier(
 ) -> dict[str, Any]:
     """Train MultiHeadFilamentNet on GPU and export to ONNX + XML metadata."""
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    train_samples = load_dataset_xml(train_xml)
+    train_samples = load_training_samples_with_feedback(train_xml)
     val_samples = load_dataset_xml(val_xml)
 
     train_loader = DataLoader(VisualAttributeDataset(train_samples, augment=True), batch_size=batch_size, shuffle=True)

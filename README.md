@@ -67,4 +67,4 @@ filament-kit-vision predict path/to/spool.jpg --tier cpu
 
 Release manifests (`SHA256SUMS`) are signed with RFC 8032 Ed25519 (`SHA256SUMS.sig`) via `tools/sign_release.py`.
 
-> **Security Note (`text_parser.joblib`):** The CPU text parser model (`text_parser.joblib`) is stored in `joblib`/pickle format, which executes Python object deserialization on load. It must **only** be loaded from verified release assets after `SHA256SUMS.sig` (Ed25519 signature) and `SHA256SUMS` (SHA-256 digest) have been validated against the pinned public key. Migrating the text parser weights to a non-pickle format (ONNX / JSON) is planned for `v0.2.0`.
+> **Security Note (`text_parser.npz`):** All CPU model weights (`detector_rfdetr_n.onnx`, `visual_multihead.onnx`, and `text_parser.npz`) are stored in pickle-free formats (`ONNX` and NumPy `.npz` loaded strictly with `allow_pickle=False`). All release assets are verified against `SHA256SUMS.sig` (Ed25519 signature) and `SHA256SUMS` (SHA-256 digest) before installation.
