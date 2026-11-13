@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<benchmark-report version="1">
+  <evaluation tier="cpu-hybrid-gold" samples="44" vendor-exact-acc="0.8409" vendor-fuzzy-acc="0.8409" material-acc="0.9545" line-acc="0.9318" color-family-acc="1.0" color-name-acc="1.0" sealed-acc="0.7955" mean-latency-ms="6164.7" p95-latency-ms="11501.7">cpu_gold</evaluation>
+  <evaluation tier="cpu-hybrid-val" samples="60" vendor-exact-acc="0.8167" vendor-fuzzy-acc="0.8167" material-acc="0.7333" line-acc="0.6333" color-family-acc="0.9333" color-name-acc="0.9333" sealed-acc="0.7333" mean-latency-ms="3983.6" p95-latency-ms="7095.7">cpu_val</evaluation>
+  <evaluation tier="gpu-vlm-gold" samples="24" vendor-exact-acc="0.9167" vendor-fuzzy-acc="0.9167" material-acc="0.9167" line-acc="0.9583" color-family-acc="1.0" color-name-acc="1.0" sealed-acc="0.8333" mean-latency-ms="42648.0" p95-latency-ms="57432.3">gpu_gold</evaluation>
+</benchmark-report>

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<visual-classifier-meta version="1" onnx="visual_multihead.onnx">
+  <color-families>
+    <class id="0" name="Black">Black</class>
+    <class id="1" name="White">White</class>
+    <class id="2" name="Gray/Silver">Gray/Silver</class>
+    <class id="3" name="Red">Red</class>
+    <class id="4" name="Orange">Orange</class>
+    <class id="5" name="Yellow">Yellow</class>
+    <class id="6" name="Green">Green</class>
+    <class id="7" name="Blue">Blue</class>
+    <class id="8" name="Purple">Purple</class>
+    <class id="9" name="Pink">Pink</class>
+    <class id="10" name="Brown/Beige">Brown/Beige</class>
+    <class id="11" name="Gold/Bronze">Gold/Bronze</class>
+    <class id="12" name="Transparent/Natural">Transparent/Natural</class>
+    <class id="13" name="Multi-color/Rainbow">Multi-color/Rainbow</class>
+  </color-families>
+  <visual-finishes>
+    <class id="0" name="Basic">Basic</class>
+    <class id="1" name="Matte">Matte</class>
+    <class id="2" name="Silk">Silk</class>
+    <class id="3" name="Galaxy">Galaxy</class>
+    <class id="4" name="Translucent">Translucent</class>
+    <class id="5" name="CF">CF</class>
+    <class id="6" name="Wood">Wood</class>
+    <class id="7" name="Glow">Glow</class>
+  </visual-finishes>
+  <visual-vendors>
+    <class id="0" name="Bambu Lab">Bambu Lab</class>
+    <class id="1" name="SUNLU">SUNLU</class>
+    <class id="2" name="ELEGOO">ELEGOO</class>
+    <class id="3" name="Polymaker">Polymaker</class>
+    <class id="4" name="eSUN">eSUN</class>
+    <class id="5" name="OVERTURE">OVERTURE</class>
+    <class id="6" name="Hatchbox">Hatchbox</class>
+    <class id="7" name="Prusament">Prusament</class>
+    <class id="8" name="Creality">Creality</class>
+    <class id="9" name="Anycubic">Anycubic</class>
+    <class id="10" name="Eryone">Eryone</class>
+    <class id="11" name="Inland">Inland</class>
+    <class id="12" name="JAYO">JAYO</class>
+    <class id="13" name="GEEETECH">GEEETECH</class>
+    <class id="14" name="DEEPLEE">DEEPLEE</class>
+    <class id="15" name="Push Plastic">Push Plastic</class>
+    <class id="16" name="Kingroon">Kingroon</class>
+    <class id="17" name="Amolen">Amolen</class>
+    <class id="18" name="Flashforge">Flashforge</class>
+    <class id="19" name="3DXTech">3DXTech</class>
+    <class id="20" name="Other">Other</class>
+  </visual-vendors>
+  <sealed-states>
+    <class id="0" name="bare_spool">bare_spool</class>
+    <class id="1" name="in_vacuum_bag">in_vacuum_bag</class>
+    <class id="2" name="in_box">in_box</class>
+  </sealed-states>
+</visual-classifier-meta>

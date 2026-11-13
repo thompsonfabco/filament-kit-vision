@@ -1,0 +1,50 @@
+# --- Owner photos and every dataset: never committed, never shipped ---
+seed images/
+data/seed_converted/
+data/harvested/
+data/synthetic/
+data/yolo_build/
+data/rfdetr_build/
+# Annotation XML holds per-photo labels and OCR text read from the owner's photos.
+# Only the aggregate benchmark report is tracked.
+data/annotations/*
+!data/annotations/benchmark_report.xml
+scratch/
+*.HEIC
+*.heic
+
+# --- Model weights and training runs: shipped as release assets, never in git ---
+*.pt
+*.pth
+*.onnx
+*.joblib
+*.safetensors
+*.bin
+*.gguf
+models/cpu/yolo_runs/
+models/cpu/rfdetr_runs/
+models/gpu/**/tokenizer.json
+models/gpu/**/tokenizer_config.json
+models/gpu/**/chat_template.jinja
+models/gpu/**/processor_config.json
+models/gpu/**/adapter_config.json
+models/gpu/**/README.md
+models/gpu/**/training_meta.xml
+runs/
+wandb/
+
+# --- Python / tooling ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+release/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.gradio/
