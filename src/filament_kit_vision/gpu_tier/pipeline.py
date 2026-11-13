@@ -15,7 +15,7 @@ from PIL import Image
 from ..catalog.matcher import CatalogMatcher
 from ..cpu_tier.pipeline import CPUHybridPipeline
 from ..xml_io import CONFIGS_DIR, PROJECT_ROOT, FilamentItem, IntakeReadResult
-from .train_vlm import SYSTEM_PROMPT, USER_PROMPT
+from .prompts import SYSTEM_PROMPT, USER_PROMPT
 
 
 def verify_pinned_base_model(manifest_path: Path | None = None) -> Path:

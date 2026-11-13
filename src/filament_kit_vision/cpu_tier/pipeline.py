@@ -11,7 +11,8 @@ import cv2
 import joblib
 import numpy as np
 import onnxruntime as ort
-from rapidocr_onnxruntime import RapidOCR
+
+from .ocr_helper import create_rapidocr, run_rapidocr
 
 log = logging.getLogger(__name__)
 
@@ -50,8 +51,8 @@ from ..catalog.matcher import CatalogMatcher
 from ..data_engine.auto_labeler import extract_multi_angle_ocr_and_boxes, parse_ocr_heuristic
 from ..xml_io import PROJECT_ROOT, BoundingBox, FilamentItem, IntakeReadResult
 from .color_lab import extract_filament_color
+from .labels import COLOR_FAMILIES, SEALED_STATES, VISUAL_FINISHES, VISUAL_VENDORS
 from .train_detector import DETECTOR_CLASSES
-from .train_visual import COLOR_FAMILIES, SEALED_STATES, VISUAL_FINISHES, VISUAL_VENDORS
 from .unwarp import unwarp_circular_spool_label
 
 
@@ -71,17 +72,7 @@ class CPUHybridPipeline:
     ):
         self.matcher = CatalogMatcher()
         self.providers = select_onnx_providers()
-
-        ocr_kwargs: dict[str, Any] = {}
-        if "CUDAExecutionProvider" in self.providers:
-            ocr_kwargs = {"det_use_cuda": True, "cls_use_cuda": True, "rec_use_cuda": True}
-        elif "DmlExecutionProvider" in self.providers:
-            ocr_kwargs = {"det_use_dml": True, "cls_use_dml": True, "rec_use_dml": True}
-        try:
-            self.ocr = RapidOCR(**ocr_kwargs) if ocr_kwargs else RapidOCR()
-        except Exception as exc:
-            log.warning("Accelerated RapidOCR init failed (%s); falling back to CPU", exc)
-            self.ocr = RapidOCR()
+        self.ocr = create_rapidocr(self.providers)
 
         sess_opts = ort.SessionOptions()
         sess_opts.intra_op_num_threads = min(8, max(2, os.cpu_count() or 4))
@@ -210,7 +201,7 @@ class CPUHybridPipeline:
                     if max(crop.shape[:2]) < 480:
                         s_up = 480.0 / max(crop.shape[:2])
                         crop = cv2.resize(crop, (int(crop.shape[1] * s_up), int(crop.shape[0] * s_up)), interpolation=cv2.INTER_CUBIC)
-                    res_c, _ = self.ocr(crop)
+                    res_c = run_rapidocr(self.ocr, crop)
                     if res_c:
                         for _, text, score in res_c:
                             t = str(text).strip()
@@ -224,7 +215,7 @@ class CPUHybridPipeline:
         if is_spool and len(" ".join(ocr_lines)) < 16:
             strips = unwarp_circular_spool_label(img_bgr)
             for strip in strips[:2]:
-                res_s, _ = self.ocr(strip)
+                res_s = run_rapidocr(self.ocr, strip)
                 if res_s:
                     for _, text, score in res_s:
                         if float(score) >= 0.48 and str(text).strip():

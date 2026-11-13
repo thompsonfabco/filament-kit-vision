@@ -10,9 +10,9 @@ from typing import Any
 
 import cv2
 import numpy as np
-from rapidocr_onnxruntime import RapidOCR
 
 from ..catalog.matcher import CatalogMatcher
+from ..cpu_tier.ocr_helper import create_rapidocr
 from ..xml_io import (
     DATA_DIR,
     AnnotatedSample,
@@ -106,7 +106,7 @@ def harvest_community_real_world(target_count: int = 150) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     out_xml = DATA_DIR / "annotations" / "brand_community_realworld.xml"
 
-    ocr = RapidOCR()
+    ocr = create_rapidocr()
     matcher = CatalogMatcher()
     seen_hashes: set[str] = set()
     seen_urls: set[str] = set()

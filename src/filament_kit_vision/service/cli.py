@@ -77,7 +77,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "predict":
         rec = FilamentRecognizer(default_tier=args.tier)
-        res = rec.predict([Path(p) for p in args.images], tier=args.tier)
+        res, _, _ = rec.predict([Path(p) for p in args.images], tier=args.tier)
         if args.format == "filament-kit":
             print(json.dumps(res.to_filament_kit_dict(), indent=2))
         else:

@@ -19,7 +19,7 @@ from pathlib import Path
 
 from sign_release import ROOT, generate_sha256sums, sign
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 API_VERSION = "1.0"
 
 

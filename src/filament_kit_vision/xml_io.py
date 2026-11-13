@@ -415,7 +415,7 @@ class IntakeReadResult:
             "questions": list(self.questions),
             "reader": {
                 "service": "filament-kit-vision",
-                "module_version": "0.1.0",
+                "module_version": "0.1.1",
                 "tier_used": "gpu" if "gpu" in self.tier.lower() else "cpu",
                 "escalated": escalated,
                 "fallback_reason": fallback_reason,

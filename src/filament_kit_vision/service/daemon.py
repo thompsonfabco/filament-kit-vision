@@ -39,7 +39,7 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 7915
 DEFAULT_SERVICE_CONFIG_XML = CONFIGS_DIR / "service_config.xml"
 
-MODULE_VERSION = "0.1.0"
+MODULE_VERSION = "0.1.1"
 API_VERSION = "1.0"
 MAX_PHOTOS = 8
 MAX_PHOTO_BYTES = 20 * 1024 * 1024  # 20 MB
@@ -122,6 +122,9 @@ class FilamentRecognizer:
 
     def gpu_available(self) -> bool:
         if self._gpu_available is None:
+            if self.default_tier == "cpu":
+                self._gpu_available = False
+                return False
             try:
                 import torch
 
@@ -572,7 +575,7 @@ class LocalIntakeClient:
 
     def health(self) -> dict[str, Any]:
         req = urllib.request.Request(f"{self.base_url}/v1/health", headers=self._headers())
-        with urllib.request.urlopen(req, timeout=3.0) as resp:
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
             return json.loads(resp.read().decode("utf-8"))
 
     def read_labels(

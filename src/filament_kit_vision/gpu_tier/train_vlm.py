@@ -11,14 +11,7 @@ from PIL import Image
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 from ..xml_io import DATA_DIR, PROJECT_ROOT, AnnotatedSample, IntakeReadResult, load_dataset_xml, write_xml_atomic
-
-SYSTEM_PROMPT = (
-    "You are the local filament-kit-vision recognition model for Spoolman. "
-    "Examine the 3D printer filament spool or box label photo and output ONLY a valid <intake-read> XML document "
-    "containing <vendor>, <material>, <line>, <color-name>, <name>, <color-family>, <color-hex>, <specs>, and <state>."
-)
-
-USER_PROMPT = "Read the filament spool or box label in this photo and return the <intake-read> XML."
+from .prompts import SYSTEM_PROMPT, USER_PROMPT
 
 
 def _format_target_xml(sample: AnnotatedSample) -> str:

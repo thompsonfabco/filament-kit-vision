@@ -9,10 +9,10 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image
-from rapidocr_onnxruntime import RapidOCR
 
 from ..catalog.matcher import CatalogMatcher
 from ..cpu_tier.color_lab import extract_filament_color
+from ..cpu_tier.ocr_helper import create_rapidocr, run_rapidocr
 from ..xml_io import (
     DATA_DIR,
     PROJECT_ROOT,
@@ -25,7 +25,7 @@ from ..xml_io import (
 
 def extract_multi_angle_ocr_and_boxes(
     img_bgr: np.ndarray,
-    ocr_engine: RapidOCR,
+    ocr_engine: Any,
 ) -> tuple[list[str], list[BoundingBox]]:
     """Run RapidOCR at 0 deg and 90 deg CCW (for vertical box stickers) and locate label & spool boxes."""
     h, w = img_bgr.shape[:2]
@@ -33,7 +33,7 @@ def extract_multi_angle_ocr_and_boxes(
     text_boxes_norm: list[tuple[float, float, float, float, float]] = []
 
     # 1. Standard upright OCR
-    res0, _ = ocr_engine(img_bgr)
+    res0 = run_rapidocr(ocr_engine, img_bgr)
     if res0:
         for poly, text, score in res0:
             conf = float(score)
@@ -58,7 +58,7 @@ def extract_multi_angle_ocr_and_boxes(
         for rot_code in (cv2.ROTATE_90_CLOCKWISE, cv2.ROTATE_90_COUNTERCLOCKWISE):
             rot_img = cv2.rotate(img_bgr, rot_code)
             rh, rw = rot_img.shape[:2]
-            res_rot, _ = ocr_engine(rot_img)
+            res_rot = run_rapidocr(ocr_engine, rot_img)
             if not res_rot:
                 continue
             rot_lines = [str(t).strip() for _, t, s in res_rot if float(s) >= 0.42 and str(t).strip()]
@@ -322,7 +322,7 @@ def annotate_seed_dataset(
     """Annotate all 134 converted seed images and write seed_labels.xml, gold_test_split.xml, train_split.xml, val_split.xml."""
     conv_root = Path(converted_dir)
     jpg_files = sorted(conv_root.glob("*.jpg"), key=lambda p: p.name.lower())
-    ocr_engine = RapidOCR()
+    ocr_engine = create_rapidocr()
     matcher = CatalogMatcher()
 
     vlm_model = None

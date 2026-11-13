@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# filament-kit-vision installer / uninstaller for Ubuntu Linux Server (20.04+, 22.04+, 24.04+)
+# filament-kit-vision installer / uninstaller for Ubuntu Linux Server (22.04+, 24.04+, 26.04+)
 set -euo pipefail
 
 TIER="auto"
@@ -87,7 +87,7 @@ fi
 
 # Determine disk and download estimates upfront
 if [ "${TIER}" = "cpu" ]; then
-    EST_DL="~120 MB pip dependencies (+ 164.9 MB release assets)"
+    EST_DL="~120 MB pip dependencies (+ 200.0 MB release assets)"
     EST_DISK="~650 MB"
 elif [ "${TIER}" = "gpu" ]; then
     EST_DL="~19.1 GB (PyTorch CUDA wheels + pinned Qwen2.5-VL-7B-Instruct safetensors + 178.0 MB release assets)"
@@ -95,12 +95,23 @@ elif [ "${TIER}" = "gpu" ]; then
 else
     # auto
     if command -v nvidia-smi >/dev/null 2>&1; then
-        EST_DL="~19.1 GB (PyTorch CUDA wheels + pinned Qwen2.5-VL-7B-Instruct safetensors + 342.7 MB release assets)"
+        EST_DL="~19.1 GB (PyTorch CUDA wheels + pinned Qwen2.5-VL-7B-Instruct safetensors + 377.8 MB release assets)"
         EST_DISK="~19.8 GB"
     else
-        EST_DL="~120 MB pip dependencies (+ 342.7 MB release assets)"
+        EST_DL="~120 MB pip dependencies (+ 377.8 MB release assets)"
         EST_DISK="~650 MB"
     fi
+fi
+
+# Verify supported Python version (3.10 - 3.14) before modifying the host
+if ! command -v python3 >/dev/null 2>&1; then
+    echo "[filament-kit-vision] Error: python3 is required (supported: Python 3.10 through 3.14)." >&2
+    exit 1
+fi
+if ! python3 -c 'import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 14) else 1)'; then
+    PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")')
+    echo "[filament-kit-vision] Error: Unsupported Python ${PY_VER}. Supported versions: Python 3.10 through 3.14." >&2
+    exit 1
 fi
 
 echo "[filament-kit-vision] === Installation Plan ==="
@@ -111,6 +122,27 @@ echo "  Listen:        http://${BIND}:${PORT}"
 echo "  Estimated DL:  ${EST_DL}"
 echo "  Required Disk: ${EST_DISK}"
 echo "============================================="
+
+INSTALL_COMPLETE=false
+HAD_COMPLETE_INSTALL=false
+if [ -f "${PREFIX}/.installed" ]; then
+    HAD_COMPLETE_INSTALL=true
+fi
+
+cleanup_on_failure() {
+    local rc=$?
+    if [ "${INSTALL_COMPLETE}" != true ] && [ "${HAD_COMPLETE_INSTALL}" != true ]; then
+        echo "[filament-kit-vision] Install failed (exit ${rc}); cleaning up ${PREFIX}..." >&2
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
+            systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
+            rm -f "${UNIT_FILE}"
+            systemctl daemon-reload 2>/dev/null || true
+        fi
+        rm -rf "${PREFIX}"
+    fi
+}
+trap cleanup_on_failure EXIT
 
 # Ensure target directories exist
 mkdir -p "${PREFIX}"
@@ -241,6 +273,8 @@ while [ ${WAITED} -lt ${MAX_WAIT} ]; do
 done
 
 if [ "${HEALTH_OK}" = true ]; then
+    touch "${PREFIX}/.installed"
+    INSTALL_COMPLETE=true
     echo "[filament-kit-vision] Installation successful! Service is healthy and responding on http://${BIND}:${PORT}/v1/health."
     exit 0
 else

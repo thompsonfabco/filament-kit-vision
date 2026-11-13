@@ -17,12 +17,13 @@ import re
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
-from rapidocr_onnxruntime import RapidOCR
 
 from ..catalog.matcher import CatalogMatcher
+from ..cpu_tier.ocr_helper import create_rapidocr, run_rapidocr
 from ..xml_io import (
     DATA_DIR,
     AnnotatedSample,
@@ -193,7 +194,7 @@ def fetch_bing_async_candidates(query: str, max_results: int = 35) -> list[str]:
     return urls
 
 
-def _fast_upright_ocr(img_bgr: np.ndarray, ocr_engine: RapidOCR) -> tuple[list[str], list[BoundingBox]]:
+def _fast_upright_ocr(img_bgr: np.ndarray, ocr_engine: Any) -> tuple[list[str], list[BoundingBox]]:
     """Run a single fast upright RapidOCR pass (downscaled to max_side=850 for speed)."""
     h, w = img_bgr.shape[:2]
     max_side = max(h, w)
@@ -203,7 +204,7 @@ def _fast_upright_ocr(img_bgr: np.ndarray, ocr_engine: RapidOCR) -> tuple[list[s
     else:
         work = img_bgr
     wh, ww = work.shape[:2]
-    res, _ = ocr_engine(work)
+    res = run_rapidocr(ocr_engine, work)
     ocr_lines: list[str] = []
     text_boxes: list[tuple[float, float, float, float, float]] = []
     if res:
@@ -233,7 +234,7 @@ def _fast_upright_ocr(img_bgr: np.ndarray, ocr_engine: RapidOCR) -> tuple[list[s
 
 def verify_real_spool_or_box_image(
     img_bgr: np.ndarray,
-    ocr_engine: RapidOCR,
+    ocr_engine: Any,
     required_vendor: str | None = None,
     allow_trusted_brand_Tokens: list[str] | None = None,
 ) -> tuple[bool, list[str], list[BoundingBox], int]:
@@ -315,7 +316,7 @@ def harvest_verified_brand_dataset(
     out_dir.mkdir(parents=True, exist_ok=True)
     out_xml = DATA_DIR / "annotations" / f"brand_{brand_slug}.xml"
 
-    ocr = RapidOCR()
+    ocr = create_rapidocr()
     matcher = CatalogMatcher()
     seen_hashes: set[str] = set()
     seen_urls: set[str] = set()

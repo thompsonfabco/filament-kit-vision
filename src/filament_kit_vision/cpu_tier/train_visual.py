@@ -14,25 +14,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
 from ..xml_io import DATA_DIR, PROJECT_ROOT, AnnotatedSample, load_dataset_xml, parse_xml_file, write_xml_atomic
-
-COLOR_FAMILIES = [
-    "Black", "White", "Gray/Silver", "Red", "Orange", "Yellow", "Green",
-    "Blue", "Purple", "Pink", "Brown/Beige", "Gold/Bronze",
-    "Transparent/Natural", "Multi-color/Rainbow",
-]
-
-VISUAL_FINISHES = [
-    "Basic", "Matte", "Silk", "Galaxy", "Translucent", "CF", "Wood", "Glow",
-]
-
-VISUAL_VENDORS = [
-    "Bambu Lab", "SUNLU", "ELEGOO", "Polymaker", "eSUN", "OVERTURE",
-    "Hatchbox", "Prusament", "Creality", "Anycubic", "Eryone", "Inland",
-    "JAYO", "GEEETECH", "DEEPLEE", "Push Plastic", "Kingroon", "Amolen",
-    "Flashforge", "3DXTech", "Other",
-]
-
-SEALED_STATES = ["bare_spool", "in_vacuum_bag", "in_box"]
+from .labels import COLOR_FAMILIES, SEALED_STATES, VISUAL_FINISHES, VISUAL_VENDORS
 
 
 class MultiHeadFilamentNet(nn.Module):

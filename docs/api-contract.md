@@ -42,7 +42,7 @@ Response `200`:
 {
   "service": "filament-kit-vision",
   "api_version": "1.0",
-  "module_version": "0.1.0",
+  "module_version": "0.1.1",
   "status": "ok",
   "default_tier": "auto",
   "tiers": {
@@ -128,7 +128,7 @@ Response `200`:
   "questions": ["Is the colour Charcoal or Black?"],
   "reader": {
     "service": "filament-kit-vision",
-    "module_version": "0.1.0",
+    "module_version": "0.1.1",
     "tier_used": "cpu",
     "escalated": false,
     "fallback_reason": null,

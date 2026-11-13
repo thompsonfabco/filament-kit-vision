@@ -13,9 +13,9 @@ from typing import Any
 import cv2
 import numpy as np
 from PIL import Image
-from rapidocr_onnxruntime import RapidOCR
 
 from ..catalog.matcher import CatalogMatcher
+from ..cpu_tier.ocr_helper import create_rapidocr
 from ..xml_io import (
     DATA_DIR,
     AnnotatedSample,
@@ -260,7 +260,7 @@ def harvest_web_dataset(
 ) -> dict[str, int]:
     """Download real filament spool & box photos from the web, auto-annotate with RapidOCR + CatalogMatcher, and merge into XML splits."""
     matcher = CatalogMatcher()
-    ocr_engine = RapidOCR()
+    ocr_engine = create_rapidocr()
     harvest_dir = DATA_DIR / "harvested"
     harvest_dir.mkdir(parents=True, exist_ok=True)
 
