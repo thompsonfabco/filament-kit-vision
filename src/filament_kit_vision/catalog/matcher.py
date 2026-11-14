@@ -78,6 +78,20 @@ class CatalogMatcher:
         if self.catalog_path.is_file():
             self._load_catalog(self.catalog_path)
 
+        self._sorted_vendor_aliases: list[str] = [
+            a for a in sorted(self.vendor_aliases.keys(), key=len, reverse=True) if len(a) >= 3
+        ]
+        self._vendor_alias_patterns: list[tuple[str, re.Pattern[str]]] = [
+            (a, re.compile(rf"\b{re.escape(a)}\b")) for a in self._sorted_vendor_aliases
+        ]
+        self._sorted_material_aliases: list[str] = sorted(
+            self.material_aliases.keys(), key=len, reverse=True
+        )
+        self._material_alias_patterns: list[tuple[str, re.Pattern[str]]] = [
+            (a, re.compile(rf"\b{re.escape(a)}(?:\b|(?=\+|\s|$))"))
+            for a in self._sorted_material_aliases
+        ]
+
     def _load_taxonomy(self) -> None:
         for mat_el in self.taxonomy_root.findall("./materials/material"):
             code = mat_el.attrib["code"]
@@ -141,8 +155,21 @@ class CatalogMatcher:
                 self.all_products.append(prod)
             self.products_by_vendor[vname] = prods
 
-    def resolve_vendor(self, text: str, min_score: float = 80.0) -> tuple[str, float]:
-        """Resolve a noisy vendor string or full OCR text to a canonical catalog vendor."""
+    def find_vendor_candidates(self, text: str) -> dict[str, int]:
+        """Return canonical vendors found via word-boundary alias matches in text mapped to match counts."""
+        clean = (text or "").strip().lower()
+        if not clean:
+            return {}
+        counts: dict[str, int] = {}
+        for alias_low, pat in self._vendor_alias_patterns:
+            hits = pat.findall(clean)
+            if hits:
+                canon = self.vendor_aliases[alias_low]
+                counts[canon] = counts.get(canon, 0) + len(hits)
+        return counts
+
+    def resolve_vendor(self, text: str, min_score: float = 84.0) -> tuple[str, float]:
+        """Resolve an OCR vendor string to a canonical vendor name and confidence (0..100)."""
         clean = (text or "").strip()
         if not clean or clean.lower() == "unknown":
             return "Unknown", 0.0
@@ -151,10 +178,25 @@ class CatalogMatcher:
         if low in self.vendor_aliases:
             return self.vendor_aliases[low], 100.0
 
-        # Word-boundary scan for vendor aliases inside longer OCR strings
-        for alias_low in sorted(self.vendor_aliases.keys(), key=len, reverse=True):
-            if len(alias_low) >= 3 and re.search(rf"\b{re.escape(alias_low)}\b", low):
-                return self.vendor_aliases[alias_low], 95.0
+        # Word-boundary scan for vendor aliases inside longer OCR strings, ranked by frequency then alias length
+        best_canon = "Unknown"
+        best_key = (0, 0)
+        counts: dict[str, int] = {}
+        max_len: dict[str, int] = {}
+        for alias_low, pat in self._vendor_alias_patterns:
+            hits = pat.findall(low)
+            if hits:
+                canon = self.vendor_aliases[alias_low]
+                counts[canon] = counts.get(canon, 0) + len(hits)
+                if len(alias_low) > max_len.get(canon, 0):
+                    max_len[canon] = len(alias_low)
+        for canon, cnt in counts.items():
+            key = (cnt, max_len.get(canon, 0))
+            if key > best_key:
+                best_key = key
+                best_canon = canon
+        if best_canon != "Unknown":
+            return best_canon, 95.0
 
         match = process.extractOne(
             low,
@@ -181,11 +223,18 @@ class CatalogMatcher:
             if c_low in combined or c_low.replace("-", " ") in combined:
                 return code
 
+        # Check line_hint before defaulted "PLA" so updated product lines (e.g. "Rapid PETG") update base material
+        if line_hint.strip() and text.strip().upper() == "PLA" and line_hint.strip().lower() != "pla":
+            hint_low = line_hint.strip().lower()
+            for alias_low, pat in self._material_alias_patterns:
+                if pat.search(hint_low):
+                    return self.material_aliases[alias_low]
+
         if text.strip().lower() in self.material_aliases:
             return self.material_aliases[text.strip().lower()]
 
-        for alias_low in sorted(self.material_aliases.keys(), key=len, reverse=True):
-            if re.search(rf"\b{re.escape(alias_low)}(?:\b|(?=\+|\s|$))", combined):
+        for alias_low, pat in self._material_alias_patterns:
+            if pat.search(combined):
                 return self.material_aliases[alias_low]
 
         if "petg" in combined:
@@ -264,9 +313,11 @@ class CatalogMatcher:
 
         # Fall back to visual color family / hex match against catalog product colors
         if visual_hex and product and product.colors:
-            best_c = min(product.colors, key=lambda c: _rgb_distance(visual_hex, c.hex_code))
-            if _rgb_distance(visual_hex, best_c.hex_code) < 65.0:
-                return best_c.name, visual_hex, best_c.family, "estimate"
+            fam_colors = [c for c in product.colors if not visual_family or c.family == visual_family]
+            if fam_colors:
+                best_c = min(fam_colors, key=lambda c: _rgb_distance(visual_hex, c.hex_code))
+                if _rgb_distance(visual_hex, best_c.hex_code) < 65.0:
+                    return best_c.name, visual_hex, best_c.family, "estimate"
 
         fam = visual_family or "Black"
         hex_code, inferred_fam = infer_color_hex_and_family(fam, self.taxonomy_root)

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from filament_kit_vision.catalog.matcher import CatalogMatcher
 from filament_kit_vision.cpu_tier.text_parser_io import load_text_parser_npz
 from filament_kit_vision.service.daemon import start_daemon
 from filament_kit_vision.service.feedback import ingest_feedback_bundles
@@ -40,6 +41,7 @@ def test_pickle_free_text_parser_npz() -> None:
     assert probs.shape == (1, len(pipes["vendor_pipe"].classes_))
     top_vendor = str(pipes["vendor_pipe"].classes_[probs[0].argmax()])
     assert "Bambu" in top_vendor
+    assert CatalogMatcher().normalize_material("PLA", "Rapid PETG") == "PETG"
 
 
 def test_feedback_http_roundtrip_and_ingest(tmp_path: Path) -> None:
@@ -170,6 +172,28 @@ def test_feedback_http_roundtrip_and_ingest(tmp_path: Path) -> None:
         )
         assert len(loaded) == 2
         assert loaded[0].item.vendor == "Bambu Lab"
+        assert len(loaded[0].ocr_lines) >= 1
+        assert len(loaded[0].boxes) >= 1
+
+        # Verify POST /v1/read applies optional 'hint'
+        hint_req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/v1/read",
+            data=json.dumps(
+                {
+                    "api_version": "1.0",
+                    "images_b64": [b64],
+                    "tier": "cpu",
+                    "hint": "Bambu Lab PETG-CF bare spool",
+                }
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(hint_req, timeout=20) as r:
+            hint_res = json.loads(r.read().decode("utf-8"))
+        assert hint_res["items"][0]["vendor"] == "Bambu Lab"
+        assert hint_res["items"][0]["material"] == "PETG-CF"
+        assert hint_res["items"][0]["sealed"] is False
 
         # Test one-click updater: ingest from incoming dir, archive zip, respect min_new_samples gate
         inc_dir = tmp_path / "incoming"

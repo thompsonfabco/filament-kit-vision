@@ -188,14 +188,15 @@ class FilamentRecognizer:
                     raise TierUnavailableError("GPU tier was explicitly requested but no CUDA device is available")
                 res = self._get_gpu_pipeline().predict(images)
             elif chosen == "auto":
-                res = self.cpu_pipeline.predict(images)
+                res = self.cpu_pipeline.predict(images, hint=hint)
                 needs_escalation = any(
                     it.vendor == "Unknown" or it.confidence < 0.78 for it in res.items
                 )
                 if needs_escalation:
                     if self.gpu_available():
                         try:
-                            res = self._get_gpu_pipeline().predict(images)
+                            priors = res.items if len(res.items) == len(images) else None
+                            res = self._get_gpu_pipeline().predict(images, cpu_priors=priors)
                             escalated = True
                         except Exception as exc:
                             log.warning("GPU escalation failed, keeping CPU result: %s", exc)
@@ -203,7 +204,16 @@ class FilamentRecognizer:
                     else:
                         fallback_reason = "GPU unavailable for escalation"
             else:
-                res = self.cpu_pipeline.predict(images)
+                res = self.cpu_pipeline.predict(images, hint=hint)
+
+            if hint.strip():
+                for it in res.items:
+                    self._apply_note_to_item(it, hint.strip())
+                res.questions = [
+                    f"Photo {it.photos[0] if it.photos else 0}: Please confirm filament brand (detected {it.line} {it.color_name})."
+                    for it in res.items
+                    if it.vendor == "Unknown"
+                ]
 
             # Match against live Spoolman catalog when provided
             if spoolman_filaments:
@@ -233,6 +243,41 @@ class FilamentRecognizer:
         finally:
             with self._lock:
                 self._active_reads -= 1
+
+    def _apply_note_to_item(self, item: FilamentItem, note_clean: str) -> None:
+        """Apply explicit user hint/revision note fields onto item and re-enrich from catalog."""
+        if not note_clean:
+            return
+        for v_name in self.matcher.vendors.values():
+            if re.search(rf"\b{re.escape(v_name)}\b", note_clean, re.IGNORECASE):
+                item.vendor = v_name
+                break
+
+        for mat_code in self.matcher._sorted_material_aliases:
+            if re.search(rf"\b{re.escape(mat_code)}\b", note_clean, re.IGNORECASE):
+                item.material = self.matcher.material_aliases[mat_code]
+                break
+
+        for sub in ("Matte", "Silk", "Plus", "PLA+", "HF", "Pro", "Rapid", "High Speed", "Galaxy", "Marble", "Wood", "Glow", "Translucent", "Basic"):
+            if re.search(rf"\b{re.escape(sub)}\b", note_clean, re.IGNORECASE):
+                if sub in ("Plus", "PLA+"):
+                    item.line = f"{item.material}+" if item.material == "PLA" else f"{item.material} Plus"
+                else:
+                    item.line = f"{item.material} {sub}"
+                break
+
+        nl = note_clean.lower()
+        if any(w in nl for w in ("bare", "opened", "open spool", "unsealed")):
+            item.sealed = False
+            item.sealed_reason = "bare spool"
+        elif "in box" in nl or "boxed" in nl:
+            item.sealed = True
+            item.sealed_reason = "in box"
+        elif "vacuum" in nl or "bag" in nl or "sealed" in nl:
+            item.sealed = True
+            item.sealed_reason = "in vacuum bag"
+
+        self.matcher.enrich_item(item)
 
     def revise(
         self,
@@ -268,41 +313,7 @@ class FilamentRecognizer:
 
         note_clean = (note or "").strip()
         if note_clean:
-            # Check vendor in note
-            for v_name in self.matcher.vendors.values():
-                if re.search(rf"\b{re.escape(v_name)}\b", note_clean, re.IGNORECASE):
-                    item.vendor = v_name
-                    break
-
-            # Check material in note
-            for mat_code in sorted(self.matcher.material_aliases.keys(), key=len, reverse=True):
-                if re.search(rf"\b{re.escape(mat_code)}\b", note_clean, re.IGNORECASE):
-                    item.material = self.matcher.material_aliases[mat_code]
-                    break
-
-            # Check product line / subtype in note
-            for sub in ("Matte", "Silk", "Plus", "PLA+", "HF", "Pro", "Rapid", "High Speed", "Galaxy", "Marble", "Wood", "Glow", "Translucent", "Basic"):
-                if re.search(rf"\b{re.escape(sub)}\b", note_clean, re.IGNORECASE):
-                    if sub in ("Plus", "PLA+"):
-                        item.line = f"{item.material}+" if item.material == "PLA" else f"{item.material} Plus"
-                    else:
-                        item.line = f"{item.material} {sub}"
-                    break
-
-            # Check sealed state in note
-            nl = note_clean.lower()
-            if any(w in nl for w in ("bare", "opened", "open spool", "unsealed")):
-                item.sealed = False
-                item.sealed_reason = "bare spool"
-            elif "in box" in nl or "boxed" in nl:
-                item.sealed = True
-                item.sealed_reason = "in box"
-            elif "vacuum" in nl or "bag" in nl or "sealed" in nl:
-                item.sealed = True
-                item.sealed_reason = "in vacuum bag"
-
-            # Re-enrich with catalog defaults for the updated vendor & material
-            self.matcher.enrich_item(item)
+            self._apply_note_to_item(item, note_clean)
 
         self.last_read_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         return IntakeReadResult(

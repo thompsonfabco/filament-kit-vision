@@ -18,6 +18,10 @@ from ..xml_io import CONFIGS_DIR, PROJECT_ROOT, FilamentItem, IntakeReadResult
 from .prompts import SYSTEM_PROMPT, USER_PROMPT
 
 
+_VERIFIED_BASE_CACHE: dict[str, tuple[Path, dict[str, tuple[int, int]]]] = {}
+_VERIFIED_BASE_LOCK = threading.Lock()
+
+
 def verify_pinned_base_model(manifest_path: Path | None = None) -> Path:
     """Download/locate the pinned GPU base model revision and verify every file's size and SHA-256."""
     from huggingface_hub import snapshot_download
@@ -38,6 +42,18 @@ def verify_pinned_base_model(manifest_path: Path | None = None) -> Path:
     model_id = str(data["model_id"])
     revision = str(data["revision"])
     expected_files: dict[str, dict[str, Any]] = data["files"]
+    cache_key = f"{model_id}@{revision}"
+
+    with _VERIFIED_BASE_LOCK:
+        cached = _VERIFIED_BASE_CACHE.get(cache_key)
+        if cached is not None:
+            cached_dir, file_stats = cached
+            if all(
+                (cached_dir / rel_name).is_file()
+                and ((st := (cached_dir / rel_name).stat()).st_size, st.st_mtime_ns) == exp_st
+                for rel_name, exp_st in file_stats.items()
+            ):
+                return cached_dir
 
     snap_dir = Path(
         snapshot_download(
@@ -46,11 +62,13 @@ def verify_pinned_base_model(manifest_path: Path | None = None) -> Path:
             allow_patterns=list(expected_files.keys()),
         )
     )
+    verified_stats: dict[str, tuple[int, int]] = {}
     for rel_name, meta in expected_files.items():
         fp = snap_dir / rel_name
         if not fp.is_file():
             raise RuntimeError(f"Missing pinned base model file: {rel_name}")
-        actual_size = fp.stat().st_size
+        st = fp.stat()
+        actual_size = st.st_size
         if actual_size != int(meta["size"]):
             raise RuntimeError(
                 f"Size mismatch for {rel_name}: expected {meta['size']}, got {actual_size}"
@@ -64,6 +82,10 @@ def verify_pinned_base_model(manifest_path: Path | None = None) -> Path:
             raise RuntimeError(
                 f"SHA-256 mismatch for {rel_name}: expected {meta['sha256']}, got {actual_sha}"
             )
+        verified_stats[rel_name] = (st.st_size, st.st_mtime_ns)
+
+    with _VERIFIED_BASE_LOCK:
+        _VERIFIED_BASE_CACHE[cache_key] = (snap_dir, verified_stats)
     return snap_dir
 
 
@@ -91,6 +113,7 @@ class GPUVLMPipeline:
         self._processor: Any = None
         self._last_used: float = 0.0
         self._lock = threading.Lock()
+        self._infer_lock = threading.Lock()
 
     def _ensure_loaded(self) -> None:
         with self._lock:
@@ -137,25 +160,35 @@ class GPUVLMPipeline:
 
     def unload_if_idle(self, force: bool = False) -> bool:
         """Free GPU VRAM if idle for more than idle_unload_seconds (or immediately if force=True)."""
-        with self._lock:
-            if self._model is None:
-                return False
-            if not force and (time.time() - self._last_used) < self.idle_unload_seconds:
-                return False
-            import torch
+        acquired = self._infer_lock.acquire(blocking=force)
+        if not acquired:
+            return False
+        try:
+            with self._lock:
+                if self._model is None:
+                    return False
+                if not force and (time.time() - self._last_used) < self.idle_unload_seconds:
+                    return False
+                import torch
 
-            del self._model
-            del self._processor
-            self._model = None
-            self._processor = None
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            return True
+                del self._model
+                del self._processor
+                self._model = None
+                self._processor = None
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                return True
+        finally:
+            self._infer_lock.release()
 
-    def predict_image(self, image_input: str | Path | bytes | np.ndarray, photo_index: int = 0) -> FilamentItem:
+    def predict_image(
+        self,
+        image_input: str | Path | bytes | np.ndarray,
+        photo_index: int = 0,
+        cpu_prior: FilamentItem | None = None,
+    ) -> FilamentItem:
         import torch
 
-        self._ensure_loaded()
         if isinstance(image_input, (str, Path)):
             pil_img = Image.open(image_input).convert("RGB")
         elif isinstance(image_input, bytes):
@@ -171,8 +204,9 @@ class GPUVLMPipeline:
             scale = 672.0 / max(w, h)
             pil_img = pil_img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
 
-        # Also get fast CPU OCR/visual prior so VLM has exact OCR characters even on tiny text
-        cpu_prior = self.cpu_helper.predict_image(image_input, photo_index=photo_index)
+        # Reuse escalated CPU prior if already computed, otherwise run CPU helper
+        if cpu_prior is None:
+            cpu_prior = self.cpu_helper.predict_image(image_input, photo_index=photo_index)
         hint_prompt = (
             f"{USER_PROMPT}\n"
             f"OCR/Visual prior hint: vendor={cpu_prior.vendor}, line={cpu_prior.line}, "
@@ -190,30 +224,33 @@ class GPUVLMPipeline:
                 ],
             },
         ]
-        text_in = self._processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        inputs = self._processor(text=[text_in], images=[pil_img], padding=True, return_tensors="pt").to(self.device)
 
         from transformers import StoppingCriteria, StoppingCriteriaList
 
-        stop_ids = self._processor.tokenizer.encode("</intake-read>", add_special_tokens=False)
+        with self._infer_lock:
+            self._ensure_loaded()
+            text_in = self._processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs = self._processor(text=[text_in], images=[pil_img], padding=True, return_tensors="pt").to(self.device)
+            stop_ids = self._processor.tokenizer.encode("</intake-read>", add_special_tokens=False)
 
-        class _XmlEndStop(StoppingCriteria):
-            def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs: Any) -> bool:
-                if len(stop_ids) > 0 and input_ids.shape[1] >= len(stop_ids):
-                    tail = input_ids[0, -len(stop_ids):].tolist()
-                    if tail == stop_ids:
-                        return True
-                return False
+            class _XmlEndStop(StoppingCriteria):
+                def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs: Any) -> bool:
+                    if len(stop_ids) > 0 and input_ids.shape[1] >= len(stop_ids):
+                        tail = input_ids[0, -len(stop_ids):].tolist()
+                        if tail == stop_ids:
+                            return True
+                    return False
 
-        with torch.no_grad():
-            gen_ids = self._model.generate(
-                **inputs,
-                max_new_tokens=165,
-                do_sample=False,
-                stopping_criteria=StoppingCriteriaList([_XmlEndStop()]),
-            )
-        out_ids = [out[len(inp):] for inp, out in zip(inputs.input_ids, gen_ids)]
-        xml_reply = self._processor.batch_decode(out_ids, skip_special_tokens=True)[0]
+            with torch.no_grad():
+                gen_ids = self._model.generate(
+                    **inputs,
+                    max_new_tokens=165,
+                    do_sample=False,
+                    stopping_criteria=StoppingCriteriaList([_XmlEndStop()]),
+                )
+            self._last_used = time.time()
+            out_ids = [out[len(inp):] for inp, out in zip(inputs.input_ids, gen_ids)]
+            xml_reply = self._processor.batch_decode(out_ids, skip_special_tokens=True)[0]
 
         try:
             parsed = IntakeReadResult.from_xml(xml_reply)
@@ -235,13 +272,18 @@ class GPUVLMPipeline:
 
         return cpu_prior
 
-    def predict(self, images: list[str | Path | bytes | np.ndarray]) -> IntakeReadResult:
+    def predict(
+        self,
+        images: list[str | Path | bytes | np.ndarray],
+        cpu_priors: list[FilamentItem] | None = None,
+    ) -> IntakeReadResult:
         t0 = time.perf_counter()
         items: list[FilamentItem] = []
         questions: list[str] = []
 
         for idx, img in enumerate(images):
-            it = self.predict_image(img, photo_index=idx)
+            prior = cpu_priors[idx] if (cpu_priors is not None and idx < len(cpu_priors)) else None
+            it = self.predict_image(img, photo_index=idx, cpu_prior=prior)
             merged = False
             for existing in items:
                 if (

@@ -244,7 +244,7 @@ def parse_ocr_heuristic(
     # 5. Extract explicit color name from OCR
     color_name = ""
     color_patterns = [
-        r"(?:colou?r)\s*[:：\-]?\s*([A-Za-z][A-Za-z0-9\s\+\*]{1,28}?)(?=\s*\||$|\s+1\.75|\s+2\.85|\s+Print|\s+Net|\s+Made|\s+\d)",
+        r"(?:colou?r)\s*[:：\-]\s*([A-Za-z][A-Za-z0-9\s\+\*]{1,28}?)(?=\s*\||$|\s+1\.75|\s+2\.85|\s+Print|\s+Net|\s+Made|\s+\d)",
         r"\b(Indigo\s*Blue|Titanium\s*Gr[ae]y|Carbon\s*Fiber\s*Black|Carbon\s*Fiber\s*Green|Silk\s*Copper|Silk\s*Gold|Silk\s*Silver|Silk\s*Black|Silk\s*White|Wood\s*Color|Mango\s*Yellow|Jade\s*White|Ivory\s*White|Bone\s*White|Ash\s*Gr[ae]y|Nardo\s*Gr[ae]y|Charcoal|Scarlet\s*Red|Mandarin\s*Orange|Lemon\s*Yellow|Grass\s*Green|Bambu\s*Green|Mistletoe\s*Green|Marine\s*Blue|Cobalt\s*Blue|Ice\s*Blue|Lilac\s*Purple|Sakura\s*Pink|Latte\s*Brown|Desert\s*Tan|Olive\s*Green|Space\s*Gr[ae]y|Burgundy\s*Red|Fire\s*Engine\s*Red|Metallic\s*Rose\s*Gold|Rose\s*Gold|Galaxy\s*Black|Midnight|Black\*2\+White\*2)\b",
         r"\b(Black|White|Gr[ae]y|Silver|Red|Orange|Yellow|Green|Blue|Purple|Pink|Brown|Beige|Gold|Bronze|Copper|Cyan|Magenta|Transparent|Clear|Natural|Wood|Marble|Rainbow)\b",
     ]
@@ -252,7 +252,7 @@ def parse_ocr_heuristic(
         cm = re.search(cpat, full_text, flags=re.IGNORECASE)
         if cm:
             cand = re.sub(r"\s+", " ", cm.group(1)).strip(" -:|.,")
-            if cand.lower() not in ("transition", "filament", "printer", "speed", "temp", "china"):
+            if cand.lower() not in ("transition", "filament", "printer", "speed", "temp", "china", "silk pla", "pla", "petg", "abs", "asa", "tpu"):
                 color_name = cand
                 break
 

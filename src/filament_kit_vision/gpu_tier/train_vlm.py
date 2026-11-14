@@ -115,13 +115,22 @@ def train_gpu_vlm_lora(
             pil_img = Image.open(img_path).convert("RGB").resize((560, 560), Image.Resampling.LANCZOS)
             target_xml = _format_target_xml(s)
 
+            # Align training prompt format with inference prompt (with 25% vendor dropout so model learns to verify image)
+            hint_vendor = "Unknown" if random.random() < 0.25 else s.item.vendor
+            hint_prompt = (
+                f"{USER_PROMPT}\n"
+                f"OCR/Visual prior hint: vendor={hint_vendor}, line={s.item.line}, "
+                f"material={s.item.material}, color={s.item.color_name} ({s.item.color_family}). "
+                "Verify against the image and output the exact <intake-read> XML."
+            )
+
             messages = [
                 {"role": "system", "content": [{"type": "text", "text": SYSTEM_PROMPT}]},
                 {
                     "role": "user",
                     "content": [
                         {"type": "image", "image": pil_img},
-                        {"type": "text", "text": USER_PROMPT},
+                        {"type": "text", "text": hint_prompt},
                     ],
                 },
                 {"role": "assistant", "content": [{"type": "text", "text": target_xml}]},

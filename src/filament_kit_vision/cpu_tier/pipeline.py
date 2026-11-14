@@ -184,46 +184,111 @@ class CPUHybridPipeline:
             img_bgr = cv2.resize(img_bgr, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
         det_boxes = self._detect_regions(img_bgr)
-        ocr_lines, boxes = extract_multi_angle_ocr_and_boxes(img_bgr, self.ocr)
-        if det_boxes:
-            boxes = det_boxes + boxes
+        ocr_lines: list[str] = []
+        seen_ocr: set[str] = set()
+        boxes: list[BoundingBox] = list(det_boxes)
 
-        # Crop detected label regions for sharper OCR on small/angled stickers
-        seen_ocr = set(ocr_lines)
-        for b in det_boxes[:3]:
-            if b.label in ("box_label", "spool_label"):
-                pad = 0.06
-                px1 = max(0, int((b.x1 - pad) * img_bgr.shape[1]))
-                py1 = max(0, int((b.y1 - pad) * img_bgr.shape[0]))
-                px2 = min(img_bgr.shape[1], int((b.x2 + pad) * img_bgr.shape[1]))
-                py2 = min(img_bgr.shape[0], int((b.y2 + pad) * img_bgr.shape[0]))
-                crop = img_bgr[py1:py2, px1:px2]
-                if crop.size > 0 and min(crop.shape[:2]) >= 24:
-                    if max(crop.shape[:2]) < 480:
-                        s_up = 480.0 / max(crop.shape[:2])
-                        crop = cv2.resize(crop, (int(crop.shape[1] * s_up), int(crop.shape[0] * s_up)), interpolation=cv2.INTER_CUBIC)
-                    res_c = run_rapidocr(self.ocr, crop)
-                    if res_c:
-                        for _, text, score in res_c:
-                            t = str(text).strip()
-                            if float(score) >= 0.45 and t and t not in seen_ocr:
-                                ocr_lines.append(t)
-                                seen_ocr.add(t)
+        def _append_lines(new_lines: list[str]) -> None:
+            for txt in new_lines:
+                t = str(txt).strip()
+                if t and t not in seen_ocr:
+                    ocr_lines.append(t)
+                    seen_ocr.add(t)
+
+        def _ocr_is_strong(lines: list[str]) -> bool:
+            if not lines:
+                return False
+            joined = " ".join(lines).lower()
+            if len(joined) < 18:
+                return False
+            kws = ("pla", "petg", "abs", "asa", "tpu", "1.75", "2.85", "temp", "color", "colour", "filament", "1kg", "print")
+            if sum(1 for k in kws if k in joined) < 2:
+                return False
+            v, _ = self.matcher.resolve_vendor(joined, min_score=85.0)
+            return v != "Unknown"
+
+        # Crop-first OCR: run multi-angle OCR on high-confidence label detections first to avoid full-image passes
+        ih, iw = img_bgr.shape[:2]
+        label_crops = [
+            b for b in det_boxes[:3]
+            if b.label in ("box_label", "spool_label") and b.confidence >= 0.55 and (b.x2 - b.x1) * (b.y2 - b.y1) < 0.72
+        ]
+        cropped_indices: set[int] = set()
+        for c_idx, b in enumerate(label_crops[:2]):
+            pad = 0.08
+            px1 = max(0, int((b.x1 - pad) * iw))
+            py1 = max(0, int((b.y1 - pad) * ih))
+            px2 = min(iw, int((b.x2 + pad) * iw))
+            py2 = min(ih, int((b.y2 + pad) * ih))
+            crop = img_bgr[py1:py2, px1:px2]
+            if crop.size > 0 and min(crop.shape[:2]) >= 24:
+                if max(crop.shape[:2]) < 640:
+                    s_up = min(2.5, 640.0 / max(crop.shape[:2]))
+                    crop = cv2.resize(crop, (int(crop.shape[1] * s_up), int(crop.shape[0] * s_up)), interpolation=cv2.INTER_CUBIC)
+                crop_lines, _ = extract_multi_angle_ocr_and_boxes(crop, self.ocr)
+                _append_lines(crop_lines)
+                cropped_indices.add(c_idx)
+                if _ocr_is_strong(ocr_lines):
+                    break
+
+        # Full-image fallback only when crop-first OCR was empty/incomplete
+        if not _ocr_is_strong(ocr_lines):
+            full_lines, full_boxes = extract_multi_angle_ocr_and_boxes(img_bgr, self.ocr)
+            _append_lines(full_lines)
+            if full_boxes:
+                boxes = det_boxes + full_boxes
+
+            for b_idx, b in enumerate(det_boxes[:3]):
+                if b.label in ("box_label", "spool_label") and b_idx not in cropped_indices and (b.x2 - b.x1) * (b.y2 - b.y1) < 0.72:
+                    pad = 0.06
+                    px1 = max(0, int((b.x1 - pad) * iw))
+                    py1 = max(0, int((b.y1 - pad) * ih))
+                    px2 = min(iw, int((b.x2 + pad) * iw))
+                    py2 = min(ih, int((b.y2 + pad) * ih))
+                    crop = img_bgr[py1:py2, px1:px2]
+                    if crop.size > 0 and min(crop.shape[:2]) >= 24:
+                        if max(crop.shape[:2]) < 480:
+                            s_up = 480.0 / max(crop.shape[:2])
+                            crop = cv2.resize(crop, (int(crop.shape[1] * s_up), int(crop.shape[0] * s_up)), interpolation=cv2.INTER_CUBIC)
+                        res_c = run_rapidocr(self.ocr, crop)
+                        if res_c:
+                            for _, text, score in res_c:
+                                t = str(text).strip()
+                                if float(score) >= 0.45 and t and t not in seen_ocr:
+                                    ocr_lines.append(t)
+                                    seen_ocr.add(t)
 
         is_spool = any(b.label in ("spool_flange", "spool_windings", "spool_label") for b in boxes)
 
-        # If circular spool with minimal upright OCR text, try polar unwarping
+        # If circular spool with minimal upright OCR text, try polar unwarping on detected spool crop
         if is_spool and len(" ".join(ocr_lines)) < 16:
-            strips = unwarp_circular_spool_label(img_bgr)
+            spool_box = next(
+                (b for b in det_boxes if b.label in ("spool_label", "spool_flange") and (b.x2 - b.x1) > 0.15 and (b.y2 - b.y1) > 0.15),
+                None,
+            )
+            if spool_box is not None:
+                px1 = max(0, int((spool_box.x1 - 0.04) * iw))
+                py1 = max(0, int((spool_box.y1 - 0.04) * ih))
+                px2 = min(iw, int((spool_box.x2 + 0.04) * iw))
+                py2 = min(ih, int((spool_box.y2 + 0.04) * ih))
+                unwarp_target = img_bgr[py1:py2, px1:px2] if (px2 - px1) >= 64 and (py2 - py1) >= 64 else img_bgr
+            else:
+                unwarp_target = img_bgr
+            strips = unwarp_circular_spool_label(unwarp_target)
             for strip in strips[:2]:
                 res_s = run_rapidocr(self.ocr, strip)
                 if res_s:
                     for _, text, score in res_s:
-                        if float(score) >= 0.48 and str(text).strip():
-                            ocr_lines.append(str(text).strip())
+                        t = str(text).strip()
+                        if float(score) >= 0.48 and t and t not in seen_ocr:
+                            ocr_lines.append(t)
+                            seen_ocr.add(t)
 
         item, vis_finish = parse_ocr_heuristic(ocr_lines, img_bgr, self.matcher, is_spool=is_spool)
         item.photos = [photo_index]
+        heur_vendor = item.vendor
+        joined_ocr = " | ".join(ocr_lines)
+        ocr_vendor_cands = self.matcher.find_vendor_candidates(joined_ocr) if ocr_lines else {}
 
         # Refine visually estimated filament color from detected spool_windings crop
         if item.color_hex_source == "estimate":
@@ -241,34 +306,57 @@ class CPUHybridPipeline:
                     if item.color_name in COLOR_FAMILIES:
                         item.color_name = "unknown"
 
+        # Run Visual Multi-Head ONNX classifier predictions before fusion
+        vis_preds = self._run_visual_onnx(img_bgr)
+
         # Fuse trained Text Parser predictions when OCR text is present
+        tp_ven = "Unknown"
+        tp_prob = 0.0
         if self.text_parser is not None and ocr_lines:
-            joined_ocr = " | ".join(ocr_lines)
-            if item.vendor == "Unknown":
+            joined_lower = joined_ocr.lower()
+            if heur_vendor == "Unknown" or len(ocr_vendor_cands) > 1:
                 v_probs = self.text_parser["vendor_pipe"].predict_proba([joined_ocr])[0]
                 v_best_idx = int(np.argmax(v_probs))
-                if float(v_probs[v_best_idx]) >= 0.35:
-                    item.vendor = str(self.text_parser["vendor_pipe"].classes_[v_best_idx])
+                tp_prob = float(v_probs[v_best_idx])
+                tp_ven = str(self.text_parser["vendor_pipe"].classes_[v_best_idx])
+
+            if item.material == "PLA" and "pla" not in joined_lower and "material_pipe" in self.text_parser:
+                m_probs = self.text_parser["material_pipe"].predict_proba([joined_ocr])[0]
+                m_best_idx = int(np.argmax(m_probs))
+                if float(m_probs[m_best_idx]) >= 0.45:
+                    item.material = str(self.text_parser["material_pipe"].classes_[m_best_idx])
 
             if item.line in ("PLA", "PETG", "ABS", "ASA"):
                 l_probs = self.text_parser["line_pipe"].predict_proba([joined_ocr])[0]
                 l_best_idx = int(np.argmax(l_probs))
                 if float(l_probs[l_best_idx]) >= 0.42:
                     item.line = str(self.text_parser["line_pipe"].classes_[l_best_idx])
+                    item.material = self.matcher.normalize_material(item.material, item.line)
 
-        # Fuse trained Visual Multi-Head ONNX classifier predictions
-        vis_preds = self._run_visual_onnx(img_bgr)
+        v_ven, v_conf = vis_preds.get("visual_vendor", ("Other", 0.0))
+        if len(ocr_vendor_cands) > 1:
+            if v_ven in ocr_vendor_cands and v_conf >= 0.70:
+                item.vendor = v_ven
+            elif tp_ven in ocr_vendor_cands and tp_prob >= 0.50:
+                item.vendor = tp_ven
+        elif heur_vendor == "Unknown":
+            if v_ven != "Other" and v_conf >= 0.75 and v_conf > tp_prob:
+                item.vendor = v_ven
+                item.confidence = max(item.confidence, round(min(0.88, 0.78 + (v_conf - 0.45) * 0.20), 3))
+                if "vendor" not in item.estimates:
+                    item.estimates.append("vendor")
+            elif tp_prob >= 0.35:
+                item.vendor = tp_ven
+                item.confidence = max(item.confidence, round(min(0.92, 0.78 + tp_prob * 0.20), 3))
+            elif v_ven != "Other" and v_conf >= 0.45:
+                item.vendor = v_ven
+                item.confidence = max(item.confidence, round(min(0.85, 0.78 + (v_conf - 0.45) * 0.20), 3))
+                if "vendor" not in item.estimates:
+                    item.estimates.append("vendor")
+
         if vis_preds:
             v_col, c_conf = vis_preds["color_family"]
             v_fin, f_conf = vis_preds["visual_finish"]
-            v_ven, v_conf = vis_preds["visual_vendor"]
-            v_seal, s_conf = vis_preds["sealed_state"]
-
-            # If no label text gave a vendor, use visual flange vendor
-            if item.vendor == "Unknown" and v_ven != "Other" and v_conf >= 0.45:
-                item.vendor = v_ven
-                if "vendor" not in item.estimates:
-                    item.estimates.append("vendor")
 
             # If color was only visually estimated (no explicit label color text), use ONNX color family if confident
             if item.color_hex_source == "estimate" and c_conf >= 0.50:
@@ -323,29 +411,51 @@ class CPUHybridPipeline:
         item = self.matcher.enrich_item(item)
         return item
 
-    def predict(self, images: list[str | Path | bytes | np.ndarray]) -> IntakeReadResult:
+    def predict(self, images: list[str | Path | bytes | np.ndarray], hint: str = "") -> IntakeReadResult:
         t0 = time.perf_counter()
         items: list[FilamentItem] = []
         questions: list[str] = []
 
         for idx, img in enumerate(images):
             it = self.predict_image(img, photo_index=idx)
-            # Group photos of identical vendor + line + color into one item with increased count/photos
+            # Group photos of identical vendor + line + color, or fuse multi-angle photos of one spool
             merged = False
             for existing in items:
-                if (
+                exact_same = (
                     existing.vendor == it.vendor
                     and existing.line == it.line
                     and existing.color_name == it.color_name
                     and existing.sealed == it.sealed
-                ):
-                    existing.photos.append(idx)
+                )
+                multi_angle_same = (
+                    (existing.vendor == "Unknown" or it.vendor == "Unknown")
+                    and not (existing.vendor == "Unknown" and it.vendor == "Unknown")
+                    and (existing.color_family == it.color_family or existing.material == it.material)
+                )
+                if exact_same or multi_angle_same:
+                    if idx not in existing.photos:
+                        existing.photos.append(idx)
+                    if existing.vendor == "Unknown" and it.vendor != "Unknown":
+                        existing.vendor = it.vendor
+                        existing.confidence = max(existing.confidence, it.confidence)
+                        if existing.line == existing.material and it.line != it.material:
+                            existing.line = it.line
+                        if existing.color_name in ("unknown", existing.color_family) and it.color_name not in ("unknown", it.color_family):
+                            existing.color_name = it.color_name
+                            existing.color_hex = it.color_hex
+                        self.matcher.enrich_item(existing)
+                    elif it.vendor != "Unknown" and existing.vendor == it.vendor:
+                        if existing.line == existing.material and it.line != it.material:
+                            existing.line = it.line
+                            self.matcher.enrich_item(existing)
                     merged = True
                     break
             if not merged:
                 items.append(it)
+
+        for it in items:
             if it.vendor == "Unknown":
-                questions.append(f"Photo {idx}: Please confirm filament brand (detected {it.line} {it.color_name}).")
+                questions.append(f"Photo {it.photos[0]}: Please confirm filament brand (detected {it.line} {it.color_name}).")
 
         elapsed_ms = (time.perf_counter() - t0) * 1000.0
         return IntakeReadResult(

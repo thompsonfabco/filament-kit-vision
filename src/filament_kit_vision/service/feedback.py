@@ -339,6 +339,20 @@ def ingest_feedback_bundles(
     imported_entries = 0
     imported_images = 0
 
+    ocr_engine: Any = None
+    cv2_mod: Any = None
+    np_mod: Any = None
+    extract_fn: Any = None
+    try:
+        import cv2 as cv2_mod  # type: ignore[no-redef]
+        import numpy as np_mod  # type: ignore[no-redef]
+        from ..cpu_tier.ocr_helper import create_rapidocr
+        from ..data_engine.auto_labeler import extract_multi_angle_ocr_and_boxes as extract_fn
+
+        ocr_engine = create_rapidocr()
+    except Exception:
+        ocr_engine = None
+
     for zpath in zips:
         with zipfile.ZipFile(zpath, "r") as zf:
             names = set(zf.namelist())
@@ -356,7 +370,7 @@ def ingest_feedback_bundles(
                 if not corr.get("vendor") or not corr.get("material"):
                     continue
 
-                saved_paths: list[tuple[str, int, int]] = []
+                saved_paths: list[tuple[str, int, int, list[str], list[Any]]] = []
                 for im in entry_el.findall("./images/image"):
                     fname = Path((im.text or "").strip()).name
                     if not fname or fname not in names:
@@ -372,7 +386,16 @@ def ingest_feedback_bundles(
                     out_img = dest_img_root / fname
                     out_img.write_bytes(img_bytes)
                     rel_or_abs = out_img.relative_to(DATA_DIR.parent) if out_img.is_relative_to(DATA_DIR.parent) else out_img
-                    saved_paths.append((str(rel_or_abs).replace("\\", "/"), w, h))
+
+                    ocr_lines: list[str] = []
+                    boxes: list[Any] = []
+                    if ocr_engine is not None and cv2_mod is not None and np_mod is not None and extract_fn is not None:
+                        arr = np_mod.frombuffer(img_bytes, dtype=np_mod.uint8)
+                        img_bgr = cv2_mod.imdecode(arr, cv2_mod.IMREAD_COLOR)
+                        if img_bgr is not None and img_bgr.size > 0:
+                            ocr_lines, boxes = extract_fn(img_bgr, ocr_engine)
+
+                    saved_paths.append((str(rel_or_abs).replace("\\", "/"), w, h, ocr_lines, boxes))
                     imported_images += 1
 
                 if not saved_paths:
@@ -395,7 +418,8 @@ def ingest_feedback_bundles(
                     bed_range=str(corr.get("bed_range", "50-60")),
                     sealed=bool(corr.get("sealed", False)),
                 )
-                for idx_p, (spath, w, h) in enumerate(saved_paths):
+                synth_ocr = f"{item.vendor} {item.line} {item.material} {item.color_name}".strip()
+                for idx_p, (spath, w, h, ocr_lines, boxes) in enumerate(saved_paths):
                     sid = eid if idx_p == 0 else f"{eid}_{idx_p}"
                     if sid in existing_ids:
                         continue
@@ -406,6 +430,8 @@ def ingest_feedback_bundles(
                         height=h,
                         split="train",
                         item=item,
+                        boxes=boxes,
+                        ocr_lines=ocr_lines if ocr_lines else ([synth_ocr] if synth_ocr else []),
                     )
                     sample_el = sample.to_element()
                     sample_el.attrib["source"] = "user_feedback"
