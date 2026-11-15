@@ -1,22 +1,23 @@
 [Unit]
-Description=filament-kit local AI spool & box label recognition service
-After=network.target
-PartOf=filament-kit.service
+Description=filament-kit-vision Local Filament Label Recognition Daemon
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=filament-kit
 Group=filament-kit
 WorkingDirectory=/opt/filament-kit-vision
-Environment="PYTHONUNBUFFERED=1"
-Environment="HF_HOME=/var/lib/filament-kit/models/hf_cache"
-ExecStart=/opt/filament-kit-vision/.venv/bin/filament-kit-vision serve --host 127.0.0.1 --port 7915
+Environment=PYTHONUNBUFFERED=1
+Environment=FILAMENT_KIT_VISION_STATE_DIR=/var/lib/filament-kit-vision
+ExecStart=/opt/filament-kit-vision/.venv/bin/filament-kit-vision serve --host 127.0.0.1 --port 7915 --tier auto
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
-ReadWritePaths=/var/lib/filament-kit /etc/filament-kit
+ProtectHome=true
+ReadWritePaths=/var/lib/filament-kit-vision
 
 [Install]
 WantedBy=multi-user.target

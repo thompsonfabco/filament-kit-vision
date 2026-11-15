@@ -68,3 +68,15 @@ filament-kit-vision predict path/to/spool.jpg --tier cpu
 Release manifests (`SHA256SUMS`) are signed with RFC 8032 Ed25519 (`SHA256SUMS.sig`) via `tools/sign_release.py`.
 
 > **Security Note (`text_parser.npz`):** All CPU model weights (`detector_rfdetr_n.onnx`, `visual_multihead.onnx`, and `text_parser.npz`) are stored in pickle-free formats (`ONNX` and NumPy `.npz` loaded strictly with `allow_pickle=False`). All release assets are verified against `SHA256SUMS.sig` (Ed25519 signature) and `SHA256SUMS` (SHA-256 digest) before installation.
+
+## Training Feedback & Privacy
+
+- **Off by default:** Training feedback (`feedback-opt-in`) is disabled by default and requires explicit user opt-in.
+- **No automatic uploads:** Corrections are queued locally in the external state folder (`FILAMENT_KIT_VISION_STATE_DIR`, e.g. `/var/lib/filament-kit-vision`) and are only uploaded when the user explicitly clicks submit (`POST /v1/feedback/submit`).
+- **Sanitized contents:** Queued images are stripped of all EXIF, GPS, and APP metadata and resized to at most `1024px` on the longest side before being stored as `pending_feedback.xml` + JPEGs.
+- **Per-installation anonymous key:** On opt-in, the service generates an anonymous per-installation Ed25519 keypair (`install_ed25519.pem` / `install_ed25519.pub`) in the state folder to sign each submitted bundle alongside a lightweight SHA-256 Proof-of-Work.
+- **Maintainer review:** Submitted bundles land in a write-only quarantine folder and are verified (signature, PoW, and ZIP shape) and reviewed by maintainers via `filament-kit-vision ingest-feedback` (with `--drop-key` support) before training.
+
+## Offline Training Tools (`data_engine/`)
+
+The `src/filament_kit_vision/data_engine/` package contains offline dataset harvesting, augmentation, and training-prep scripts used by maintainers. It is **not** imported or executed by the runtime recognition daemon (`filament-kit-vision serve`).

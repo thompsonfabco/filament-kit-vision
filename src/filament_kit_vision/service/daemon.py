@@ -27,24 +27,26 @@ from ..xml_io import (
     CONFIGS_DIR,
     FilamentItem,
     IntakeReadResult,
+    get_service_config_path,
+    get_state_dir,
     parse_xml_file,
     parse_xml_string,
     to_xml_string,
     write_xml_atomic,
 )
-from .feedback import DEFAULT_FEEDBACK_DIR, FeedbackQueue
+from .feedback import DEFAULT_FEEDBACK_DIR, FeedbackQueue, ensure_install_keypair
 
 log = logging.getLogger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 7915
-DEFAULT_SERVICE_CONFIG_XML = CONFIGS_DIR / "service_config.xml"
+DEFAULT_SERVICE_CONFIG_XML = get_service_config_path()
 DEFAULT_FEEDBACK_ENDPOINT = (
     "https://script.google.com/macros/s/"
     "AKfycbzfxi1uUckO6BXKNdTZi9R-BfQyLpSa8cTWyCTBL-o1MGXyL89V1qLS-88ouOPbcep1/exec"
 )
 
-MODULE_VERSION = "0.2.0"
+MODULE_VERSION = "0.2.1"
 API_VERSION = "1.1"
 MAX_PHOTOS = 8
 MAX_PHOTO_BYTES = 20 * 1024 * 1024  # 20 MB
@@ -61,8 +63,8 @@ class BusyError(Exception):
     pass
 
 
-def load_service_config(path: str | Path = DEFAULT_SERVICE_CONFIG_XML) -> dict[str, Any]:
-    p = Path(path)
+def load_service_config(path: str | Path | None = None) -> dict[str, Any]:
+    p = Path(path) if path is not None else get_service_config_path()
     default_endpoint = os.environ.get("FILAMENT_KIT_VISION_FEEDBACK_ENDPOINT", DEFAULT_FEEDBACK_ENDPOINT)
     if not p.is_file():
         return {
@@ -97,7 +99,8 @@ def load_service_config(path: str | Path = DEFAULT_SERVICE_CONFIG_XML) -> dict[s
         }
 
 
-def save_service_config(cfg: dict[str, Any], path: str | Path = DEFAULT_SERVICE_CONFIG_XML) -> Path:
+def save_service_config(cfg: dict[str, Any], path: str | Path | None = None) -> Path:
+    target = Path(path) if path is not None else get_service_config_path()
     attrs = {
         "version": "1",
         "tier": str(cfg.get("tier", "auto")),
@@ -111,7 +114,7 @@ def save_service_config(cfg: dict[str, Any], path: str | Path = DEFAULT_SERVICE_
     if cfg.get("feedback_endpoint"):
         attrs["feedback-endpoint"] = str(cfg["feedback_endpoint"])
     root = StdET.Element("service-config", attrib=attrs)
-    return write_xml_atomic(path, root)
+    return write_xml_atomic(target, root)
 
 
 class FilamentRecognizer:
@@ -124,7 +127,8 @@ class FilamentRecognizer:
         auth_token: str = "",
         feedback_opt_in: bool = False,
         feedback_endpoint: str = DEFAULT_FEEDBACK_ENDPOINT,
-        feedback_dir: str | Path = DEFAULT_FEEDBACK_DIR,
+        feedback_dir: str | Path | None = None,
+        state_dir: str | Path | None = None,
     ):
         self.default_tier = default_tier.lower()
         self.cpu_pipeline = CPUHybridPipeline()
@@ -134,7 +138,12 @@ class FilamentRecognizer:
         self.auth_token = auth_token.strip()
         self.feedback_opt_in = bool(feedback_opt_in)
         self.feedback_endpoint = feedback_endpoint.strip()
-        self.feedback_queue = FeedbackQueue(queue_dir=feedback_dir)
+        resolved_state = Path(state_dir) if state_dir is not None else get_state_dir()
+        resolved_fb_dir = Path(feedback_dir) if feedback_dir is not None else (resolved_state / "feedback_queue")
+        self.state_dir = resolved_state
+        self.feedback_queue = FeedbackQueue(queue_dir=resolved_fb_dir, state_dir=resolved_state)
+        if self.feedback_opt_in:
+            ensure_install_keypair(self.state_dir)
         self._gpu_available: bool | None = None
         self.started_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
         self.last_read_at: str | None = None
@@ -369,6 +378,10 @@ class _DaemonRequestHandler(BaseHTTPRequestHandler):
         expected = f"Bearer {self.recognizer.auth_token}"
         return auth_hdr == expected
 
+    def _is_loopback_client(self) -> bool:
+        addr = (self.client_address[0] if self.client_address else "").strip()
+        return addr in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path in ("/v1/health", "/health"):
@@ -376,6 +389,7 @@ class _DaemonRequestHandler(BaseHTTPRequestHandler):
             default_tier = self.recognizer.default_tier
             is_degraded = (default_tier == "gpu" and not gpu_ok)
             status_str = "degraded" if is_degraded else "ok"
+            fb_status = self.recognizer.feedback_queue.status()
 
             payload = {
                 "service": "filament-kit-vision",
@@ -384,12 +398,23 @@ class _DaemonRequestHandler(BaseHTTPRequestHandler):
                 "status": status_str,
                 "default_tier": default_tier,
                 "tiers": {
-                    "cpu": {"usable": True, "reason": ""},
+                    "cpu": {"usable": True, "reason": "", "accelerator": "cpu"},
                     "gpu": {
                         "usable": gpu_ok,
                         "reason": "" if gpu_ok else "no CUDA device",
+                        "accelerator": "cuda" if gpu_ok else "none",
                         "loaded": self.recognizer.gpu_loaded(),
                     },
+                },
+                "capabilities": {
+                    "feedback": True,
+                    "revise": True,
+                },
+                "feedback": {
+                    "opt_in": self.recognizer.feedback_opt_in,
+                    "endpoint_configured": bool(self.recognizer.feedback_endpoint),
+                    "count": fb_status["count"],
+                    "bundle_mb": fb_status["bundle_mb"],
                 },
                 "auth_required": bool(self.recognizer.auth_token),
                 "limits": {
@@ -421,6 +446,33 @@ class _DaemonRequestHandler(BaseHTTPRequestHandler):
                     **st,
                 },
             )
+            return
+
+        if parsed.path in ("/v1/feedback/submit", "/feedback/submit"):
+            if not self._check_auth():
+                self._send_error(401, "unauthorized", "Missing or invalid bearer token")
+                return
+            st = self.recognizer.feedback_queue.submit_status()
+            self._send_json(200, {"api_version": API_VERSION, **st})
+            return
+
+        img_match = re.fullmatch(r"/(?:v1/)?feedback/([^/]+)/image", parsed.path)
+        if img_match:
+            if not self._check_auth():
+                self._send_error(401, "unauthorized", "Missing or invalid bearer token")
+                return
+            entry_id = img_match.group(1)
+            qs = parse_qs(parsed.query)
+            try:
+                idx = int(qs.get("index", ["0"])[0])
+            except ValueError:
+                self._send_error(400, "bad_request", "Invalid image index")
+                return
+            img_bytes = self.recognizer.feedback_queue.get_entry_image(entry_id, index=idx)
+            if img_bytes is None:
+                self._send_error(404, "not_found", f"Feedback image not found for entry: {entry_id}")
+                return
+            self._send_raw(200, img_bytes, "image/jpeg")
             return
 
         if parsed.path in ("/v1/feedback/bundle.zip", "/feedback/bundle.zip"):
@@ -511,6 +563,8 @@ class _DaemonRequestHandler(BaseHTTPRequestHandler):
                     predicted=body.get("predicted") or {},
                     corrected=body.get("corrected") or {},
                     note=str(body.get("note") or ""),
+                    source=str(body.get("source") or "local"),
+                    record_id=str(body.get("record_id") or ""),
                 )
                 self._send_json(200, {"api_version": API_VERSION, **res})
             except ValueError as exc:
@@ -525,10 +579,13 @@ class _DaemonRequestHandler(BaseHTTPRequestHandler):
             if not self.recognizer.feedback_opt_in:
                 self._send_error(403, "feedback_disabled", "Training feedback opt-in is disabled")
                 return
+            if "endpoint" in body and body.get("endpoint") is not None and not self._is_loopback_client():
+                self._send_error(403, "forbidden", "Non-loopback callers cannot override the feedback upload endpoint")
+                return
             endpoint = str(body.get("endpoint") or self.recognizer.feedback_endpoint or "").strip()
             try:
-                res = self.recognizer.feedback_queue.submit(endpoint_url=endpoint)
-                self._send_json(200, {"api_version": API_VERSION, **res})
+                res = self.recognizer.feedback_queue.submit_async(endpoint_url=endpoint)
+                self._send_json(202, {"api_version": API_VERSION, **res})
             except ValueError as exc:
                 self._send_error(400, "bad_request", str(exc))
             except Exception as exc:
@@ -628,7 +685,8 @@ def start_daemon(
     auth_token: str = "",
     feedback_opt_in: bool = False,
     feedback_endpoint: str = DEFAULT_FEEDBACK_ENDPOINT,
-    feedback_dir: str | Path = DEFAULT_FEEDBACK_DIR,
+    feedback_dir: str | Path | None = None,
+    state_dir: str | Path | None = None,
 ) -> ThreadingHTTPServer:
     """Create and return a configured ThreadingHTTPServer for filament-kit-vision."""
     recognizer = FilamentRecognizer(
@@ -638,6 +696,7 @@ def start_daemon(
         feedback_opt_in=feedback_opt_in,
         feedback_endpoint=feedback_endpoint,
         feedback_dir=feedback_dir,
+        state_dir=state_dir,
     )
 
     class Handler(_DaemonRequestHandler):
@@ -656,7 +715,8 @@ def run_daemon_forever(
     auth_token: str = "",
     feedback_opt_in: bool = False,
     feedback_endpoint: str = DEFAULT_FEEDBACK_ENDPOINT,
-    feedback_dir: str | Path = DEFAULT_FEEDBACK_DIR,
+    feedback_dir: str | Path | None = None,
+    state_dir: str | Path | None = None,
 ) -> None:
     server = start_daemon(
         host=host,
@@ -667,6 +727,7 @@ def run_daemon_forever(
         feedback_opt_in=feedback_opt_in,
         feedback_endpoint=feedback_endpoint,
         feedback_dir=feedback_dir,
+        state_dir=state_dir,
     )
 
     def _sweeper() -> None:

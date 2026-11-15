@@ -1,283 +1,412 @@
 #!/usr/bin/env bash
-# filament-kit-vision installer / uninstaller for Ubuntu Linux Server (22.04+, 24.04+, 26.04+)
 set -euo pipefail
 
+# filament-kit-vision verified Linux installer & uninstaller
+# Usage:
+#   curl -sSL https://github.com/thompsonfabco/filament-kit-vision/releases/latest/download/filament-kit-vision.sh | bash -s -- --tier auto
+#   bash filament-kit-vision.sh --tier cpu --prefix /opt/filament-kit-vision --no-systemd
+#   bash filament-kit-vision.sh --uninstall [--purge]
+
+REPO="thompsonfabco/filament-kit-vision"
+VERSION="latest"
 TIER="auto"
-PORT="7915"
-BIND="127.0.0.1"
-INSTALL_USER="${SUDO_USER:-$(id -un)}"
 PREFIX="/opt/filament-kit-vision"
-ASSETS_DIR=""
-UNINSTALL=false
+HOST="127.0.0.1"
+PORT="7915"
+INSTALL_USER="filament-kit"
+USER_SPECIFIED=0
+NO_SYSTEMD=0
+UNINSTALL=0
+PURGE=0
+FEEDBACK_OPT_IN="false"
+FEEDBACK_ENDPOINT=""
+LOCAL_BUNDLE_DIR=""
+PUBKEY_HEX="69d905c146629fbb1d8592757ddafdb0e9fc06d14816e8851eb9b67793b44cf5"
 
-usage() {
-    cat <<EOF
-Usage: $0 [OPTIONS]
+CREATED_PREFIX=0
+CREATED_UNIT=0
+CREATED_USER=0
+CREATED_GROUP=0
+SERVICE_NAME="filament-kit-vision"
+UNIT_FILE=""
+SYSTEMD_USER_FLAG=""
 
-Options:
-  --tier <cpu|gpu|auto>   Inference engine tier (default: auto)
-  --port <PORT>           HTTP server port (default: 7915)
-  --bind <ADDRESS>        HTTP bind address (default: 127.0.0.1)
-  --user <USER>           User account to own and run the daemon (default: current user / filament-kit)
-  --prefix <DIR>          Installation target directory (default: /opt/filament-kit-vision)
-  --assets <DIR>          Directory containing pre-downloaded & verified model assets
-  --uninstall             Stop service, disable systemd unit, and remove files
-  -h, --help              Show this help message
-EOF
-    exit 1
-}
+log() { printf '[filament-kit-vision] %s\n' "$*"; }
+warn() { printf '[filament-kit-vision] WARNING: %s\n' "$*" >&2; }
+die() { printf '[filament-kit-vision] ERROR: %s\n' "$*" >&2; exit 1; }
 
-# Parse command line flags
 while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --tier)
-            TIER="$2"
-            shift 2
-            ;;
-        --port)
-            PORT="$2"
-            shift 2
-            ;;
-        --bind)
-            BIND="$2"
-            shift 2
-            ;;
-        --user)
-            INSTALL_USER="$2"
-            shift 2
-            ;;
-        --prefix)
-            PREFIX="$2"
-            shift 2
-            ;;
-        --assets)
-            ASSETS_DIR="$2"
-            shift 2
-            ;;
-        --uninstall)
-            UNINSTALL=true
-            shift
-            ;;
-        -h|--help)
-            usage
-            ;;
-        *)
-            echo "Unknown argument: $1" >&2
-            usage
-            ;;
-    esac
+  case "$1" in
+    --tier) TIER="${2:?}"; shift 2 ;;
+    --version) VERSION="${2:?}"; shift 2 ;;
+    --prefix) PREFIX="${2:?}"; shift 2 ;;
+    --host) HOST="${2:?}"; shift 2 ;;
+    --port) PORT="${2:?}"; shift 2 ;;
+    --user) INSTALL_USER="${2:?}"; USER_SPECIFIED=1; shift 2 ;;
+    --no-systemd) NO_SYSTEMD=1; shift ;;
+    --uninstall) UNINSTALL=1; shift ;;
+    --purge) PURGE=1; shift ;;
+    --feedback-opt-in) FEEDBACK_OPT_IN="${2:?}"; shift 2 ;;
+    --feedback-endpoint) FEEDBACK_ENDPOINT="${2:?}"; shift 2 ;;
+    --local-bundle-dir) LOCAL_BUNDLE_DIR="${2:?}"; shift 2 ;;
+    -h|--help)
+      sed -n '3,10p' "$0"
+      exit 0
+      ;;
+    *) die "Unknown argument: $1" ;;
+  esac
 done
 
-SERVICE_NAME="filament-kit-vision.service"
-UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}"
+case "$TIER" in
+  auto|cpu|gpu) ;;
+  *) die "Invalid --tier '$TIER' (must be auto, cpu, or gpu)" ;;
+esac
 
-# Handle --uninstall
-if [ "${UNINSTALL}" = true ]; then
-    echo "[filament-kit-vision] Uninstalling service and files from ${PREFIX}..."
-    if command -v systemctl >/dev/null 2>&1; then
-        systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
-        systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
-        rm -f "${UNIT_FILE}"
-        systemctl daemon-reload 2>/dev/null || true
-    fi
-    rm -rf "${PREFIX}"
-    echo "[filament-kit-vision] Uninstallation complete."
-    exit 0
-fi
-
-# Determine disk and download estimates upfront
-if [ "${TIER}" = "cpu" ]; then
-    EST_DL="~120 MB pip dependencies (+ 200.0 MB release assets)"
-    EST_DISK="~650 MB"
-elif [ "${TIER}" = "gpu" ]; then
-    EST_DL="~19.1 GB (PyTorch CUDA wheels + pinned Qwen2.5-VL-7B-Instruct safetensors + 178.0 MB release assets)"
-    EST_DISK="~19.5 GB"
+if [[ $EUID -eq 0 ]]; then
+  STATE_DIR="/var/lib/filament-kit-vision"
+  UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+  SYSTEMD_USER_FLAG=""
+  INSTALL_GROUP="$INSTALL_USER"
 else
-    # auto
-    if command -v nvidia-smi >/dev/null 2>&1; then
-        EST_DL="~19.1 GB (PyTorch CUDA wheels + pinned Qwen2.5-VL-7B-Instruct safetensors + 377.8 MB release assets)"
-        EST_DISK="~19.8 GB"
-    else
-        EST_DL="~120 MB pip dependencies (+ 377.8 MB release assets)"
-        EST_DISK="~650 MB"
+  if [[ "$USER_SPECIFIED" -eq 0 ]]; then
+    INSTALL_USER="$(id -un)"
+  fi
+  INSTALL_GROUP="$(id -gn "$INSTALL_USER" 2>/dev/null || echo "$INSTALL_USER")"
+  STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/filament-kit-vision"
+  UNIT_FILE="${HOME}/.config/systemd/user/${SERVICE_NAME}.service"
+  SYSTEMD_USER_FLAG="--user"
+  if [[ "$PREFIX" == "/opt/filament-kit-vision" ]]; then
+    PREFIX="${HOME}/.local/share/filament-kit-vision"
+  fi
+fi
+
+MARKER_FILE="${STATE_DIR}/.installer_created_identity"
+
+count_waiting_feedback() {
+  local qxml="${STATE_DIR}/feedback_queue/pending_feedback.xml"
+  if [[ -f "$qxml" ]]; then
+    grep -c '<entry ' "$qxml" 2>/dev/null || echo "0"
+  else
+    echo "0"
+  fi
+}
+
+cleanup_created_identity() {
+  local rm_user="${1:-0}"
+  local rm_group="${2:-0}"
+  if [[ $EUID -eq 0 ]]; then
+    if [[ "$rm_user" -eq 1 ]] && id -u "$INSTALL_USER" >/dev/null 2>&1; then
+      userdel "$INSTALL_USER" 2>/dev/null || true
     fi
+    if [[ "$rm_group" -eq 1 ]] && getent group "$INSTALL_GROUP" >/dev/null 2>&1; then
+      groupdel "$INSTALL_GROUP" 2>/dev/null || true
+    fi
+  fi
+}
+
+if [[ "$UNINSTALL" -eq 1 ]]; then
+  log "Uninstalling filament-kit-vision from ${PREFIX}..."
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl $SYSTEMD_USER_FLAG stop "$SERVICE_NAME" 2>/dev/null || true
+    systemctl $SYSTEMD_USER_FLAG disable "$SERVICE_NAME" 2>/dev/null || true
+    rm -f "$UNIT_FILE"
+    systemctl $SYSTEMD_USER_FLAG daemon-reload 2>/dev/null || true
+  fi
+  rm -rf "$PREFIX"
+
+  RM_U=0
+  RM_G=0
+  if [[ -f "$MARKER_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$MARKER_FILE"
+    RM_U="${INSTALLER_CREATED_USER:-0}"
+    RM_G="${INSTALLER_CREATED_GROUP:-0}"
+    rm -f "$MARKER_FILE"
+  fi
+
+  WAITING_COUNT="$(count_waiting_feedback)"
+  if [[ "$PURGE" -eq 1 ]]; then
+    rm -rf "$STATE_DIR"
+    cleanup_created_identity "$RM_U" "$RM_G"
+    log "Uninstalled and purged state directory (${STATE_DIR})."
+  else
+    cleanup_created_identity "$RM_U" "$RM_G"
+    log "Uninstalled application files. Preserved external state in ${STATE_DIR} (waiting feedback corrections: ${WAITING_COUNT})."
+    log "Pass --purge on --uninstall to delete config, keys, token, and queued corrections."
+  fi
+  exit 0
 fi
 
-# Verify supported Python version (3.10 - 3.14) before modifying the host
-if ! command -v python3 >/dev/null 2>&1; then
-    echo "[filament-kit-vision] Error: python3 is required (supported: Python 3.10 through 3.14)." >&2
-    exit 1
-fi
-if ! python3 -c 'import sys; sys.exit(0 if (3, 10) <= sys.version_info[:2] <= (3, 14) else 1)'; then
-    PY_VER=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")')
-    echo "[filament-kit-vision] Error: Unsupported Python ${PY_VER}. Supported versions: Python 3.10 through 3.14." >&2
-    exit 1
-fi
-
-echo "[filament-kit-vision] === Installation Plan ==="
-echo "  Target Prefix: ${PREFIX}"
-echo "  Service User:  ${INSTALL_USER}"
-echo "  Selected Tier: ${TIER}"
-echo "  Listen:        http://${BIND}:${PORT}"
-echo "  Estimated DL:  ${EST_DL}"
-echo "  Required Disk: ${EST_DISK}"
-echo "============================================="
-
-INSTALL_COMPLETE=false
-HAD_COMPLETE_INSTALL=false
-if [ -f "${PREFIX}/.installed" ]; then
-    HAD_COMPLETE_INSTALL=true
-fi
-
+TMP_WORK="$(mktemp -d)"
 cleanup_on_failure() {
-    local rc=$?
-    if [ "${INSTALL_COMPLETE}" != true ] && [ "${HAD_COMPLETE_INSTALL}" != true ]; then
-        echo "[filament-kit-vision] Install failed (exit ${rc}); cleaning up ${PREFIX}..." >&2
-        if command -v systemctl >/dev/null 2>&1; then
-            systemctl stop "${SERVICE_NAME}" 2>/dev/null || true
-            systemctl disable "${SERVICE_NAME}" 2>/dev/null || true
-            rm -f "${UNIT_FILE}"
-            systemctl daemon-reload 2>/dev/null || true
-        fi
-        rm -rf "${PREFIX}"
+  local rc=$?
+  rm -rf "$TMP_WORK"
+  if [[ $rc -ne 0 ]]; then
+    warn "Installation failed (exit ${rc}); rolling back partial changes..."
+    if [[ "$CREATED_UNIT" -eq 1 ]] && command -v systemctl >/dev/null 2>&1; then
+      systemctl $SYSTEMD_USER_FLAG stop "$SERVICE_NAME" 2>/dev/null || true
+      systemctl $SYSTEMD_USER_FLAG disable "$SERVICE_NAME" 2>/dev/null || true
+      rm -f "$UNIT_FILE"
+      systemctl $SYSTEMD_USER_FLAG daemon-reload 2>/dev/null || true
     fi
+    if [[ "$CREATED_PREFIX" -eq 1 ]]; then
+      rm -rf "$PREFIX"
+    fi
+    cleanup_created_identity "$CREATED_USER" "$CREATED_GROUP"
+  fi
 }
 trap cleanup_on_failure EXIT
 
-# Ensure target directories exist
-mkdir -p "${PREFIX}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-# Copy release files to prefix
-echo "[filament-kit-vision] Copying files to ${PREFIX}..."
-cp -r "${SCRIPT_DIR}/pyproject.toml" "${PREFIX}/"
-cp -r "${SCRIPT_DIR}/configs" "${PREFIX}/"
-cp -r "${SCRIPT_DIR}/src" "${PREFIX}/"
-cp -r "${SCRIPT_DIR}/data" "${PREFIX}/"
-if [ -d "${SCRIPT_DIR}/models" ]; then
-    cp -r "${SCRIPT_DIR}/models" "${PREFIX}/"
-fi
-if [ -n "${ASSETS_DIR}" ] && [ -d "${ASSETS_DIR}" ]; then
-    echo "[filament-kit-vision] Installing pre-verified model assets from ${ASSETS_DIR}..."
-    mkdir -p "${PREFIX}/models/cpu" "${PREFIX}/models/gpu/qwen25_vl_7b_filament_lora"
-    for f in "${ASSETS_DIR}"/*; do
-        [ -e "$f" ] || continue
-        fname="$(basename "$f")"
-        case "${fname}" in
-            *.onnx|*.joblib)
-                cp -f "$f" "${PREFIX}/models/cpu/"
-                ;;
-            base-model.json)
-                cp -f "$f" "${PREFIX}/models/gpu/base-model.json"
-                cp -f "$f" "${PREFIX}/configs/base-model.json"
-                ;;
-            *.tar.gz)
-                tar -xzf "$f" -C "${PREFIX}/models/"
-                ;;
-            *)
-                cp -rf "$f" "${PREFIX}/models/"
-                ;;
-        esac
-    done
-fi
-if [ -f "${SCRIPT_DIR}/README.md" ]; then
-    cp -f "${SCRIPT_DIR}/README.md" "${PREFIX}/"
-fi
-if [ -f "${SCRIPT_DIR}/THIRD-PARTY.md" ]; then
-    cp -f "${SCRIPT_DIR}/THIRD-PARTY.md" "${PREFIX}/"
+if [[ $EUID -eq 0 ]]; then
+  if ! getent group "$INSTALL_GROUP" >/dev/null 2>&1; then
+    groupadd --system "$INSTALL_GROUP"
+    CREATED_GROUP=1
+    log "Created system group '${INSTALL_GROUP}'."
+  fi
+  if ! id -u "$INSTALL_USER" >/dev/null 2>&1; then
+    NOLOGIN_BIN="/usr/sbin/nologin"
+    [[ -x "$NOLOGIN_BIN" ]] || NOLOGIN_BIN="/sbin/nologin"
+    [[ -x "$NOLOGIN_BIN" ]] || NOLOGIN_BIN="/bin/false"
+    useradd --system --no-create-home --shell "$NOLOGIN_BIN" --gid "$INSTALL_GROUP" "$INSTALL_USER"
+    CREATED_USER=1
+    log "Created system user '${INSTALL_USER}' (no home, ${NOLOGIN_BIN})."
+  fi
 fi
 
-# Ensure Python 3 venv exists
-VENV_DIR="${PREFIX}/.venv"
-if [ ! -d "${VENV_DIR}" ]; then
-    echo "[filament-kit-vision] Creating Python virtual environment in ${VENV_DIR}..."
-    python3 -m venv "${VENV_DIR}"
-fi
-
-echo "[filament-kit-vision] Installing dependencies..."
-"${VENV_DIR}/bin/pip" install --upgrade pip wheel setuptools --quiet
-"${VENV_DIR}/bin/pip" install -e "${PREFIX}" --quiet
-
-if [ "${TIER}" = "gpu" ] || ( [ "${TIER}" = "auto" ] && command -v nvidia-smi >/dev/null 2>&1 ); then
-    echo "[filament-kit-vision] Installing GPU VLM dependencies..."
-    "${VENV_DIR}/bin/pip" install -e "${PREFIX}[gpu]" --quiet
-    echo "[filament-kit-vision] Fetching & verifying pinned GPU base model (SHA-256)..."
-    "${VENV_DIR}/bin/python" -c "from filament_kit_vision.gpu_tier.pipeline import verify_pinned_base_model; verify_pinned_base_model()"
+# Resolve release base URL
+if [[ -n "$LOCAL_BUNDLE_DIR" ]]; then
+  BUNDLE_SRC="$LOCAL_BUNDLE_DIR"
+  log "Using local release bundle directory: ${BUNDLE_SRC}"
 else
-    # Detect hardware acceleration for ONNX Runtime on CPU/NPU/iGPU
-    if command -v nvidia-smi >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q "libcudart"; then
-        echo "[filament-kit-vision] CUDA runtime detected; enabling onnxruntime-gpu acceleration..."
-        "${VENV_DIR}/bin/pip" install onnxruntime-gpu --quiet || true
-    elif grep -qi "GenuineIntel" /proc/cpuinfo 2>/dev/null; then
-        echo "[filament-kit-vision] Intel CPU detected; enabling onnxruntime-openvino acceleration..."
-        "${VENV_DIR}/bin/pip" install onnxruntime-openvino --quiet || true
-    fi
+  if [[ "$VERSION" == "latest" ]]; then
+    BASE_URL="https://github.com/${REPO}/releases/latest/download"
+  else
+    BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+  fi
+  BUNDLE_SRC="$TMP_WORK"
+  log "Fetching release manifest and signatures from ${BASE_URL}..."
+  curl -fsSL "${BASE_URL}/SHA256SUMS" -o "${TMP_WORK}/SHA256SUMS"
+  curl -fsSL "${BASE_URL}/SHA256SUMS.sig" -o "${TMP_WORK}/SHA256SUMS.sig"
+  curl -fsSL "${BASE_URL}/manifest.json" -o "${TMP_WORK}/manifest.json"
 fi
 
-# Configure service settings under /etc/filament-kit-vision (preserve existing settings on upgrade)
-ETC_DIR="/etc/filament-kit-vision"
-mkdir -p "${ETC_DIR}"
-if [ ! -f "${PREFIX}/configs/service_config.xml" ]; then
-    "${VENV_DIR}/bin/filament-kit-vision" config --tier "${TIER}" --host "${BIND}" --port "${PORT}"
+# Verify Ed25519 signature over SHA256SUMS when public key is embedded
+if [[ "$PUBKEY_HEX" != "REPLACE_WITH_RELEASE_ED25519_PUBLIC_KEY_HEX" ]]; then
+  python3 - "$PUBKEY_HEX" "${BUNDLE_SRC}/SHA256SUMS" "${BUNDLE_SRC}/SHA256SUMS.sig" <<'PYEOF'
+import base64, sys, pathlib
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+pub_hex, sums_p, sig_p = sys.argv[1], sys.argv[2], sys.argv[3]
+pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub_hex))
+pub.verify(base64.b64decode(pathlib.Path(sig_p).read_bytes().strip()), pathlib.Path(sums_p).read_bytes())
+print("[filament-kit-vision] Ed25519 signature verified on SHA256SUMS.")
+PYEOF
+else
+  warn "Embedded release public key placeholder detected; skipping Ed25519 check."
 fi
-cp -n "${PREFIX}/configs/service_config.xml" "${ETC_DIR}/service_config.xml" 2>/dev/null || true
 
-# Ensure permissions
-if id "${INSTALL_USER}" >/dev/null 2>&1; then
-    chown -R "${INSTALL_USER}:${INSTALL_USER}" "${PREFIX}" "${ETC_DIR}"
+# Determine assets for requested tier from manifest.json
+ASSETS=$(python3 - "${BUNDLE_SRC}/manifest.json" "$TIER" <<'PYEOF'
+import json, sys
+m = json.loads(open(sys.argv[1], encoding="utf-8").read())
+for a in m["tiers"][sys.argv[2]]["assets"]:
+    print(a)
+PYEOF
+)
+
+if [[ -z "$LOCAL_BUNDLE_DIR" ]]; then
+  for asset in $ASSETS; do
+    log "Downloading ${asset}..."
+    curl -fsSL "${BASE_URL}/${asset}" -o "${BUNDLE_SRC}/${asset}"
+  done
 fi
 
-# Install / update systemd service unit
-if command -v systemctl >/dev/null 2>&1; then
-    echo "[filament-kit-vision] Writing systemd unit ${UNIT_FILE}..."
-    cat <<UNIT > "${UNIT_FILE}"
+# Verify SHA-256 of every downloaded asset
+(cd "$BUNDLE_SRC" && for asset in $ASSETS manifest.json; do
+  grep "  ${asset}\$" SHA256SUMS | sha256sum -c -
+done)
+
+# Create/upgrade prefix directory (preserve external STATE_DIR across upgrades)
+if [[ ! -d "$PREFIX" ]]; then
+  CREATED_PREFIX=1
+fi
+mkdir -p "$PREFIX"
+
+PKG_TAR=$(echo "$ASSETS" | tr ' ' '\n' | grep '^filament-kit-vision-.*\.tar\.gz$' | head -n1)
+[[ -n "$PKG_TAR" ]] || die "Package tarball not found in manifest assets"
+tar -xzf "${BUNDLE_SRC}/${PKG_TAR}" -C "$PREFIX"
+
+# Place CPU ONNX/parser assets
+mkdir -p "${PREFIX}/models/cpu"
+for f in rf_detr_n.onnx visual_classifier.onnx text_parser.npz; do
+  if [[ -f "${BUNDLE_SRC}/${f}" ]]; then
+    cp -f "${BUNDLE_SRC}/${f}" "${PREFIX}/models/cpu/${f}"
+  fi
+done
+
+# Place GPU LoRA assets if downloaded
+if [[ -f "${BUNDLE_SRC}/qwen25_vl_7b_filament_lora.tar.gz" ]]; then
+  mkdir -p "${PREFIX}/models/gpu"
+  tar -xzf "${BUNDLE_SRC}/qwen25_vl_7b_filament_lora.tar.gz" -C "${PREFIX}/models/gpu"
+fi
+if [[ -f "${BUNDLE_SRC}/base-model.json" ]]; then
+  mkdir -p "${PREFIX}/models/gpu"
+  cp -f "${BUNDLE_SRC}/base-model.json" "${PREFIX}/models/gpu/base-model.json"
+fi
+
+# Create Python venv and install package
+VENV_DIR="${PREFIX}/.venv"
+if [[ ! -d "$VENV_DIR" ]]; then
+  python3 -m venv "$VENV_DIR"
+fi
+"${VENV_DIR}/bin/pip" install --upgrade pip wheel >/dev/null
+if [[ "$TIER" == "gpu" ]] || { [[ "$TIER" == "auto" ]] && command -v nvidia-smi >/dev/null 2>&1; }; then
+  "${VENV_DIR}/bin/pip" install -e "${PREFIX}[gpu]"
+else
+  "${VENV_DIR}/bin/pip" install -e "${PREFIX}"
+fi
+
+# Set up external state directory and migrate legacy configs/feedback if upgrading
+mkdir -p "${STATE_DIR}/feedback_queue"
+if [[ ! -f "${STATE_DIR}/service_config.xml" ]] && [[ -f "${PREFIX}/configs/service_config.xml" ]]; then
+  cp -f "${PREFIX}/configs/service_config.xml" "${STATE_DIR}/service_config.xml"
+  log "Migrated legacy service_config.xml into external state dir ${STATE_DIR}."
+fi
+if [[ -d "${PREFIX}/data/feedback_queue" ]] && [[ -z "$(ls -A "${STATE_DIR}/feedback_queue" 2>/dev/null)" ]]; then
+  cp -a "${PREFIX}/data/feedback_queue/." "${STATE_DIR}/feedback_queue/" 2>/dev/null || true
+  log "Migrated legacy feedback_queue into external state dir ${STATE_DIR}."
+fi
+
+export FILAMENT_KIT_VISION_STATE_DIR="${STATE_DIR}"
+CFG_FILE="${STATE_DIR}/service_config.xml"
+if [[ ! -f "$CFG_FILE" ]]; then
+  TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+  python3 - "$CFG_FILE" "$TIER" "$HOST" "$PORT" "$TOKEN" "$FEEDBACK_OPT_IN" "$FEEDBACK_ENDPOINT" <<'PYEOF'
+import sys, xml.etree.ElementTree as ET
+cfg_path, tier, host, port, token, fb_opt, fb_ep = sys.argv[1:]
+attrs = {
+    "version": "1",
+    "tier": tier,
+    "host": host,
+    "port": port,
+    "idle-unload-seconds": "300",
+    "token": token,
+    "feedback-opt-in": "true" if fb_opt == "true" else "false",
+}
+if fb_ep:
+    attrs["feedback-endpoint"] = fb_ep
+root = ET.Element("service-config", attrib=attrs)
+ET.ElementTree(root).write(cfg_path, encoding="utf-8", xml_declaration=True)
+PYEOF
+  chmod 600 "$CFG_FILE"
+else
+  log "Preserving existing config, token, keys, and feedback queue in ${STATE_DIR}."
+  "${VENV_DIR}/bin/filament-kit-vision" config --tier "$TIER" --host "$HOST" --port "$PORT" >/dev/null
+  if [[ "$FEEDBACK_OPT_IN" == "true" ]]; then
+    "${VENV_DIR}/bin/filament-kit-vision" config --feedback-opt-in true >/dev/null
+  fi
+  if [[ -n "$FEEDBACK_ENDPOINT" ]]; then
+    "${VENV_DIR}/bin/filament-kit-vision" config --feedback-endpoint "$FEEDBACK_ENDPOINT" >/dev/null
+  fi
+fi
+
+if [[ "$CREATED_USER" -eq 1 || "$CREATED_GROUP" -eq 1 ]]; then
+  cat > "$MARKER_FILE" <<EOF
+INSTALLER_CREATED_USER=${CREATED_USER}
+INSTALLER_CREATED_GROUP=${CREATED_GROUP}
+EOF
+  chmod 600 "$MARKER_FILE"
+fi
+
+if [[ $EUID -eq 0 ]]; then
+  chown -R "${INSTALL_USER}:${INSTALL_GROUP}" "${STATE_DIR}"
+fi
+
+# Install and start systemd unit unless --no-systemd
+if [[ "$NO_SYSTEMD" -eq 0 ]] && command -v systemctl >/dev/null 2>&1; then
+  mkdir -p "$(dirname "$UNIT_FILE")"
+  if [[ $EUID -eq 0 ]]; then
+    cat > "$UNIT_FILE" <<EOF
 [Unit]
-Description=filament-kit-vision local vision intake service
-After=network.target
+Description=filament-kit-vision Local Filament Label Recognition Daemon
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=${INSTALL_USER}
+Group=${INSTALL_GROUP}
 WorkingDirectory=${PREFIX}
-ExecStart=${VENV_DIR}/bin/filament-kit-vision serve --tier ${TIER} --host ${BIND} --port ${PORT}
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+Environment=FILAMENT_KIT_VISION_STATE_DIR=${STATE_DIR}
+ExecStart=${VENV_DIR}/bin/filament-kit-vision serve --host ${HOST} --port ${PORT} --tier ${TIER}
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=${STATE_DIR}
 
 [Install]
 WantedBy=multi-user.target
-UNIT
+EOF
+  else
+    cat > "$UNIT_FILE" <<EOF
+[Unit]
+Description=filament-kit-vision Local Filament Label Recognition Daemon
+After=network-online.target
 
-    systemctl daemon-reload
-    systemctl enable "${SERVICE_NAME}"
-    systemctl restart "${SERVICE_NAME}"
-fi
+[Service]
+Type=simple
+WorkingDirectory=${PREFIX}
+Environment=PYTHONUNBUFFERED=1
+Environment=FILAMENT_KIT_VISION_STATE_DIR=${STATE_DIR}
+ExecStart=${VENV_DIR}/bin/filament-kit-vision serve --host ${HOST} --port ${PORT} --tier ${TIER}
+Restart=on-failure
+RestartSec=3
 
-# Verify health endpoint answers before exiting 0
-echo "[filament-kit-vision] Verifying /v1/health endpoint on http://${BIND}:${PORT}..."
-MAX_WAIT=30
-WAITED=0
-HEALTH_OK=false
+[Install]
+WantedBy=default.target
+EOF
+  fi
+  CREATED_UNIT=1
 
-while [ ${WAITED} -lt ${MAX_WAIT} ]; do
-    if command -v curl >/dev/null 2>&1; then
-        RESP=$(curl -sf "http://${BIND}:${PORT}/v1/health" 2>/dev/null || true)
-        if [[ "${RESP}" =~ "\"status\":"[[:space:]]*\"ok\" ]] || [[ "${RESP}" =~ "\"status\":"[[:space:]]*\"degraded\" ]]; then
-            HEALTH_OK=true
-            break
-        fi
+  systemctl $SYSTEMD_USER_FLAG daemon-reload
+  systemctl $SYSTEMD_USER_FLAG enable --now "$SERVICE_NAME"
+
+  if [[ "$TIER" == "gpu" ]]; then
+    MAX_WAIT=240
+  else
+    MAX_WAIT=90
+  fi
+  log "Waiting for daemon /v1/health at http://${HOST}:${PORT}/v1/health (timeout ${MAX_WAIT}s)..."
+  WAITED=0
+  HEALTHY=0
+  while [[ $WAITED -lt $MAX_WAIT ]]; do
+    if systemctl $SYSTEMD_USER_FLAG is-failed --quiet "$SERVICE_NAME"; then
+      warn "Systemd unit '${SERVICE_NAME}' entered failed state."
+      journalctl $SYSTEMD_USER_FLAG -u "$SERVICE_NAME" -n 60 --no-pager >&2 || true
+      die "Service failed during startup."
+    fi
+    if curl -fsS "http://${HOST}:${PORT}/v1/health" >/dev/null 2>&1; then
+      HEALTHY=1
+      break
     fi
     sleep 1
     WAITED=$((WAITED + 1))
-done
+    if (( WAITED % 10 == 0 )); then
+      log "Still waiting for daemon health... (${WAITED}s/${MAX_WAIT}s)"
+    fi
+  done
 
-if [ "${HEALTH_OK}" = true ]; then
-    touch "${PREFIX}/.installed"
-    INSTALL_COMPLETE=true
-    echo "[filament-kit-vision] Installation successful! Service is healthy and responding on http://${BIND}:${PORT}/v1/health."
-    exit 0
-else
-    echo "[filament-kit-vision] Warning: Service started but /v1/health did not answer within ${MAX_WAIT}s." >&2
-    exit 1
+  if [[ "$HEALTHY" -ne 1 ]]; then
+    journalctl $SYSTEMD_USER_FLAG -u "$SERVICE_NAME" -n 60 --no-pager >&2 || true
+    die "Service did not respond to /v1/health within ${MAX_WAIT}s."
+  fi
+  log "Daemon is healthy at http://${HOST}:${PORT}/v1/health"
 fi
+
+log "Installation complete!"
+log "  Prefix: ${PREFIX}"
+log "  State:  ${STATE_DIR} (preserved across upgrades)"
+log "  Config: ${CFG_FILE}"

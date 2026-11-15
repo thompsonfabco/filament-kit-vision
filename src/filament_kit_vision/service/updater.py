@@ -80,6 +80,9 @@ def run_one_click_update(
             if dest.exists():
                 dest = arch_dir / f"{zp.stem}_dup{zp.suffix}"
             shutil.move(str(zp), str(dest))
+            meta_src = Path(str(zp) + ".meta.json")
+            if meta_src.is_file():
+                shutil.move(str(meta_src), str(Path(str(dest) + ".meta.json")))
             archived_files.append(dest.name)
 
     after_count = len(load_dataset_xml(fb_xml_path)) if fb_xml_path.is_file() else 0

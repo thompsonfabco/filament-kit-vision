@@ -18,6 +18,26 @@ CONFIGS_DIR = PROJECT_ROOT / "configs"
 DATA_DIR = PROJECT_ROOT / "data"
 
 
+def get_state_dir() -> Path:
+    """Return external state directory (FILAMENT_KIT_VISION_STATE_DIR) or repo data dir."""
+    env = os.environ.get("FILAMENT_KIT_VISION_STATE_DIR", "").strip()
+    if env:
+        return Path(env)
+    return DATA_DIR
+
+
+def get_service_config_path() -> Path:
+    """Return service_config.xml path inside external state dir when configured, else configs/."""
+    env = os.environ.get("FILAMENT_KIT_VISION_STATE_DIR", "").strip()
+    if env:
+        return Path(env) / "service_config.xml"
+    return CONFIGS_DIR / "service_config.xml"
+
+
+STATE_DIR = get_state_dir()
+SERVICE_CONFIG_PATH = get_service_config_path()
+
+
 def parse_xml_file(path: str | Path) -> StdET.Element:
     """Safely parse an XML file from disk using defusedxml."""
     raw = Path(path).read_bytes()

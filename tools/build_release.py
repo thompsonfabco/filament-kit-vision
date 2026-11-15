@@ -19,8 +19,8 @@ from pathlib import Path
 
 from sign_release import ROOT, generate_sha256sums, sign
 
-VERSION = "0.2.0"
-API_VERSION = "1.0"
+VERSION = "0.2.1"
+API_VERSION = "1.1"
 
 
 def _add_plain_file(tf: tarfile.TarFile, src: Path, arcname: str) -> None:

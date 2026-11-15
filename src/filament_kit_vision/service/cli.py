@@ -8,6 +8,7 @@ from pathlib import Path
 
 from ..catalog.library_sync import DEFAULT_LIBRARY_ROOT, build_master_catalog_xml
 from ..evaluation.benchmark import run_benchmark
+from ..xml_io import get_state_dir
 from .daemon import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -17,7 +18,7 @@ from .daemon import (
     run_daemon_forever,
     save_service_config,
 )
-from .feedback import ingest_feedback_bundles
+from .feedback import ensure_install_keypair, ingest_feedback_bundles
 from .updater import run_one_click_update
 
 
@@ -72,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     # ingest-feedback
     p_ingest = sub.add_parser("ingest-feedback", help="Import downloaded user-feedback .zip bundles into verified training XML")
     p_ingest.add_argument("source", help="Path to a feedback .zip file or directory of .zip files")
+    p_ingest.add_argument("--drop-key", action="append", default=None, help="Public key (base64) to block and purge from verified dataset")
 
     # update-models (one-click training update)
     p_upd = sub.add_parser(
@@ -130,6 +132,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.feedback_opt_in is not None:
             cfg["feedback_opt_in"] = args.feedback_opt_in == "true"
             changed = True
+            if cfg["feedback_opt_in"]:
+                ensure_install_keypair(get_state_dir())
         if args.feedback_endpoint is not None:
             cfg["feedback_endpoint"] = args.feedback_endpoint.strip()
             changed = True
@@ -182,7 +186,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.cmd == "ingest-feedback":
-        summary = ingest_feedback_bundles(args.source)
+        summary = ingest_feedback_bundles(args.source, drop_keys=args.drop_key)
         print(json.dumps(summary, indent=2))
         return 0
 
