@@ -14,12 +14,12 @@ from pathlib import Path
 
 from PIL import Image
 
-from filament_kit_vision.catalog.matcher import CatalogMatcher
-from filament_kit_vision.cpu_tier.text_parser_io import load_text_parser_npz
-from filament_kit_vision.service.daemon import start_daemon
-from filament_kit_vision.service.feedback import ingest_feedback_bundles
-from filament_kit_vision.service.updater import run_one_click_update
-from filament_kit_vision.xml_io import load_training_samples_with_feedback
+from spoolwarden_vision.catalog.matcher import CatalogMatcher
+from spoolwarden_vision.cpu_tier.text_parser_io import load_text_parser_npz
+from spoolwarden_vision.service.daemon import start_daemon
+from spoolwarden_vision.service.feedback import ingest_feedback_bundles
+from spoolwarden_vision.service.updater import run_one_click_update
+from spoolwarden_vision.xml_io import load_training_samples_with_feedback
 
 
 def _make_jpeg_with_exif_b64() -> str:
@@ -251,11 +251,11 @@ def test_section14_feedback_security_and_contract(tmp_path: Path, monkeypatch) -
     import urllib.error
     import time
     from http.server import BaseHTTPRequestHandler, HTTPServer
-    from filament_kit_vision.service.feedback import verify_package_signature, verify_pow
+    from spoolwarden_vision.service.feedback import verify_package_signature, verify_pow
 
-    monkeypatch.setenv("FILAMENT_KIT_VISION_POW_DIFFICULTY", "8")
+    monkeypatch.setenv("SPOOLWARDEN_VISION_POW_DIFFICULTY", "8")
     state_dir = tmp_path / "ext_state"
-    monkeypatch.setenv("FILAMENT_KIT_VISION_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("SPOOLWARDEN_VISION_STATE_DIR", str(state_dir))
 
     received: list[dict] = []
 

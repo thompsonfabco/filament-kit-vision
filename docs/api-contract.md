@@ -1,7 +1,7 @@
-# filament-kit-vision HTTP API contract, v1 (DRAFT)
+# spoolwarden-vision HTTP API contract, v1 (DRAFT)
 
 Status: draft for agreement with the filament-kit server builder. Nothing here is released.
-Owner: the `filament-kit-vision` repo. The kit pins a compatible range; the module never changes v1 in a
+Owner: the `spoolwarden-vision` repo. The kit pins a compatible range; the module never changes v1 in a
 breaking way.
 
 ## Principles
@@ -40,7 +40,7 @@ Response `200`:
 
 ```json
 {
-  "service": "filament-kit-vision",
+  "service": "spoolwarden-vision",
   "api_version": "1.0",
   "module_version": "0.2.0",
   "status": "ok",
@@ -127,7 +127,7 @@ Response `200`:
   ],
   "questions": ["Is the colour Charcoal or Black?"],
   "reader": {
-    "service": "filament-kit-vision",
+    "service": "spoolwarden-vision",
     "module_version": "0.2.0",
     "tier_used": "cpu",
     "escalated": false,
@@ -135,7 +135,7 @@ Response `200`:
     "model": "cpu-hybrid rf-detr-n+mnv3s+rapidocr",
     "latency_ms": 312.4
   },
-  "usage": {"model": "filament-kit-vision/cpu", "input_tokens": 0, "cached": 0, "output_tokens": 0}
+  "usage": {"model": "spoolwarden-vision/cpu", "input_tokens": 0, "cached": 0, "output_tokens": 0}
 }
 ```
 

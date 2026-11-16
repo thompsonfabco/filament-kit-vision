@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Release manifest signing tool for filament-kit-vision (ed25519 RFC 8032 over SHA256SUMS).
+"""Release manifest signing tool for spoolwarden-vision (ed25519 RFC 8032 over SHA256SUMS).
 
 Compatible with filament-kit's release verifier:
   - SHA256SUMS: output of `sha256sum <assets>` in the release directory

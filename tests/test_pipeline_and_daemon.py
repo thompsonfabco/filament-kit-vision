@@ -4,11 +4,11 @@ from __future__ import annotations
 import threading
 import numpy as np
 
-from filament_kit_vision.cpu_tier.color_lab import extract_filament_color
-from filament_kit_vision.cpu_tier.pipeline import CPUHybridPipeline
-from filament_kit_vision.cpu_tier.unwarp import unwarp_circular_spool_label
-from filament_kit_vision.service.daemon import LocalIntakeClient, start_daemon
-from filament_kit_vision.xml_io import PROJECT_ROOT
+from spoolwarden_vision.cpu_tier.color_lab import extract_filament_color
+from spoolwarden_vision.cpu_tier.pipeline import CPUHybridPipeline
+from spoolwarden_vision.cpu_tier.unwarp import unwarp_circular_spool_label
+from spoolwarden_vision.service.daemon import LocalIntakeClient, start_daemon
+from spoolwarden_vision.xml_io import PROJECT_ROOT
 
 
 def test_polar_unwarp_and_lab_color() -> None:

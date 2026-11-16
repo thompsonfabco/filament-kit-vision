@@ -1,4 +1,4 @@
-# filament-kit-vision
+# Spoolwarden Vision
 
 Local dual-tier (CPU ONNX Hybrid + GPU VLM) 3D printer filament spool and box label recognition service for **filament-kit** and **Spoolman**.
 
@@ -27,12 +27,12 @@ Evaluated on a held-out real-world test split (excluded from all training sets):
 ## Installation (Ubuntu Linux)
 
 ```bash
-sudo bash install/filament-kit-vision.sh \
+sudo bash install/spoolwarden-vision.sh \
   --tier auto \
   --port 7915 \
   --bind 127.0.0.1 \
-  --user filament-kit-vision \
-  --prefix /opt/filament-kit-vision
+  --user spoolwarden-vision \
+  --prefix /opt/spoolwarden-vision
 ```
 
 Installer flags:
@@ -40,7 +40,7 @@ Installer flags:
 - `--port <PORT>`: HTTP listen port (default `7915`).
 - `--bind <ADDRESS>`: Bind address (default `127.0.0.1`).
 - `--user <USER>`: System user to run the systemd service.
-- `--prefix <DIR>`: Install directory (default `/opt/filament-kit-vision`).
+- `--prefix <DIR>`: Install directory (default `/opt/spoolwarden-vision`).
 - `--assets <DIR>`: Directory of pre-downloaded and verified model assets.
 - `--uninstall`: Stop and remove the systemd unit and install directory.
 
@@ -54,13 +54,13 @@ pip install -e ".[test]"
 pytest -v
 
 # Start HTTP daemon
-filament-kit-vision serve --tier auto --host 127.0.0.1 --port 7915
+spoolwarden-vision serve --tier auto --host 127.0.0.1 --port 7915
 
 # Check daemon health
-filament-kit-vision status
+spoolwarden-vision status
 
 # Predict on a local photo
-filament-kit-vision predict path/to/spool.jpg --tier cpu
+spoolwarden-vision predict path/to/spool.jpg --tier cpu
 ```
 
 ## Release Signing & Model Artifact Security
@@ -72,11 +72,11 @@ Release manifests (`SHA256SUMS`) are signed with RFC 8032 Ed25519 (`SHA256SUMS.s
 ## Training Feedback & Privacy
 
 - **Off by default:** Training feedback (`feedback-opt-in`) is disabled by default and requires explicit user opt-in.
-- **No automatic uploads:** Corrections are queued locally in the external state folder (`FILAMENT_KIT_VISION_STATE_DIR`, e.g. `/var/lib/filament-kit-vision`) and are only uploaded when the user explicitly clicks submit (`POST /v1/feedback/submit`).
+- **No automatic uploads:** Corrections are queued locally in the external state folder (`SPOOLWARDEN_VISION_STATE_DIR`, e.g. `/var/lib/spoolwarden-vision`) and are only uploaded when the user explicitly clicks submit (`POST /v1/feedback/submit`).
 - **Sanitized contents:** Queued images are stripped of all EXIF, GPS, and APP metadata and resized to at most `1024px` on the longest side before being stored as `pending_feedback.xml` + JPEGs.
 - **Per-installation anonymous key:** On opt-in, the service generates an anonymous per-installation Ed25519 keypair (`install_ed25519.pem` / `install_ed25519.pub`) in the state folder to sign each submitted bundle alongside a lightweight SHA-256 Proof-of-Work.
-- **Maintainer review:** Submitted bundles land in a write-only quarantine folder and are verified (signature, PoW, and ZIP shape) and reviewed by maintainers via `filament-kit-vision ingest-feedback` (with `--drop-key` support) before training.
+- **Maintainer review:** Submitted bundles land in a write-only quarantine folder and are verified (signature, PoW, and ZIP shape) and reviewed by maintainers via `spoolwarden-vision ingest-feedback` (with `--drop-key` support) before training.
 
 ## Offline Training Tools (`data_engine/`)
 
-The `src/filament_kit_vision/data_engine/` package contains offline dataset harvesting, augmentation, and training-prep scripts used by maintainers. It is **not** imported or executed by the runtime recognition daemon (`filament-kit-vision serve`).
+The `src/spoolwarden_vision/data_engine/` package contains offline dataset harvesting, augmentation, and training-prep scripts used by maintainers. It is **not** imported or executed by the runtime recognition daemon (`spoolwarden-vision serve`).

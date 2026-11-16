@@ -202,7 +202,7 @@ def train_and_export_visual_classifier(
     onnx_model.doc_string = ""
     onnx_model.domain = ""
     del onnx_model.metadata_props[:]
-    onnx_model.producer_name = "filament-kit-vision"
+    onnx_model.producer_name = "spoolwarden-vision"
     onnx_model.graph.doc_string = ""
     for node in onnx_model.graph.node:
         node.doc_string = ""

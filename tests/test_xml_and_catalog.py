@@ -3,8 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from filament_kit_vision.catalog.matcher import CatalogMatcher
-from filament_kit_vision.xml_io import (
+from spoolwarden_vision.catalog.matcher import CatalogMatcher
+from spoolwarden_vision.xml_io import (
     AnnotatedSample,
     BoundingBox,
     FilamentItem,
@@ -38,7 +38,7 @@ def test_intake_read_xml_roundtrip() -> None:
         questions=["Confirm spool count?"],
         tier="cpu-hybrid",
         latency_ms=84.5,
-        model_name="filament-kit-vision-cpu-v1",
+        model_name="spoolwarden-vision-cpu-v1",
     )
     xml_str = res.to_xml()
     assert '<?xml version="1.0" encoding="UTF-8"?>' in xml_str

@@ -1,4 +1,4 @@
-"""filament-kit-vision: Dual-tier local filament spool & box label recognition."""
+"""spoolwarden-vision: Dual-tier local filament spool & box label recognition."""
 from __future__ import annotations
 
 from .xml_io import (

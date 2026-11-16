@@ -27,7 +27,7 @@ _ACCEL_PRIORITY = [
 
 def select_onnx_providers() -> list[str]:
     """Discover available ONNX Runtime hardware accelerators with CPUExecutionProvider fallback."""
-    force_cpu = os.environ.get("FILAMENT_KIT_VISION_CPU_ONLY", "").strip().lower() in ("1", "true", "yes")
+    force_cpu = os.environ.get("SPOOLWARDEN_VISION_CPU_ONLY", "").strip().lower() in ("1", "true", "yes")
     if force_cpu:
         return ["CPUExecutionProvider"]
     available = set(ort.get_available_providers())
@@ -463,5 +463,5 @@ class CPUHybridPipeline:
             questions=questions,
             tier="cpu-hybrid",
             latency_ms=elapsed_ms,
-            model_name="filament-kit-vision-cpu-v1",
+            model_name="spoolwarden-vision-cpu-v1",
         )

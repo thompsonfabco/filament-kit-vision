@@ -1,6 +1,6 @@
 # Third-Party Licenses and Components
 
-`filament-kit-vision` is licensed under the **GNU General Public License v3.0 (GPL-3.0)**, matching `filament-kit`.
+`spoolwarden-vision` is licensed under the **GNU General Public License v3.0 (GPL-3.0)**, matching `filament-kit`.
 
 All bundled model weights, upstream base models, inference runtimes, and dependencies are permissively licensed as documented below.
 
@@ -50,4 +50,4 @@ All bundled model weights, upstream base models, inference runtimes, and depende
 3. **Web / Community Harvested Data (`data/harvested/`):**
    - Reference photos harvested for training research. Excluded from git and release packages (`.gitignore`).
 4. **Synthetic Domain-Randomized Generator (`data/synthetic/`):**
-   - Generated algorithmically by `filament-kit-vision` data engine. Excluded from release binaries; regenerated on demand.
+   - Generated algorithmically by `spoolwarden-vision` data engine. Excluded from release binaries; regenerated on demand.

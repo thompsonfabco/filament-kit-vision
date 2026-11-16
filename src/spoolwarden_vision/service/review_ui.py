@@ -53,8 +53,8 @@ def launch_review_ui(xml_path: str | Path = DATA_DIR / "annotations" / "seed_lab
         save_dataset_xml(xml_path, samples, split_name="all_seed")
         return f"Saved {s.sample_id} to {Path(xml_path).name}"
 
-    with gr.Blocks(title="filament-kit-vision Dataset Reviewer") as demo:
-        gr.Markdown("## `filament-kit-vision` XML Dataset Reviewer")
+    with gr.Blocks(title="spoolwarden-vision Dataset Reviewer") as demo:
+        gr.Markdown("## `spoolwarden-vision` XML Dataset Reviewer")
         with gr.Row():
             idx_slider = gr.Slider(0, max(0, len(samples) - 1), step=1, value=0, label="Sample Index")
             status_box = gr.Textbox(label="Status", interactive=False)

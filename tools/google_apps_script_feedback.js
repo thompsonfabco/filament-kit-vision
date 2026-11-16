@@ -1,5 +1,5 @@
 /**
- * Write-only Google Apps Script Web App for filament-kit-vision user feedback bundles.
+ * Write-only Google Apps Script Web App for spoolwarden-vision user feedback bundles.
  *
  * Setup:
  *   1. Create a private quarantine folder in Google Drive (shared with NOBODY). Copy its folder ID.

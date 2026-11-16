@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Build a verified release folder (e.g. release/v0.1.0/) for filament-kit-vision.
+"""Build a verified release folder (e.g. release/v0.1.0/) for spoolwarden-vision.
 
 Produces:
-  - filament-kit-vision-<version>.tar.gz (plain files/dirs only, no symlinks/hardlinks)
+  - spoolwarden-vision-<version>.tar.gz (plain files/dirs only, no symlinks/hardlinks)
   - CPU model assets (detector_rfdetr_n.onnx, visual_multihead.onnx, text_parser.npz)
   - GPU LoRA adapter tarball (qwen25_vl_7b_filament_lora.tar.gz)
   - manifest.json
@@ -42,10 +42,10 @@ def build_release(version: str = VERSION, key_file: Path | None = None) -> Path:
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Source tarball from git tracked files (plain files only, top dir filament-kit-vision-<version>/)
+    # 1. Source tarball from git tracked files (plain files only, top dir spoolwarden-vision-<version>/)
     tracked = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True).splitlines()
-    code_tar = out_dir / f"filament-kit-vision-{version}.tar.gz"
-    top_prefix = f"filament-kit-vision-{version}"
+    code_tar = out_dir / f"spoolwarden-vision-{version}.tar.gz"
+    top_prefix = f"spoolwarden-vision-{version}"
     with tarfile.open(code_tar, "w:gz", format=tarfile.USTAR_FORMAT) as tf:
         for rel in sorted(tracked):
             src = ROOT / rel

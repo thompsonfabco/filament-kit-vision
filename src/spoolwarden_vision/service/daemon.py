@@ -65,14 +65,14 @@ class BusyError(Exception):
 
 def load_service_config(path: str | Path | None = None) -> dict[str, Any]:
     p = Path(path) if path is not None else get_service_config_path()
-    default_endpoint = os.environ.get("FILAMENT_KIT_VISION_FEEDBACK_ENDPOINT", DEFAULT_FEEDBACK_ENDPOINT)
+    default_endpoint = os.environ.get("SPOOLWARDEN_VISION_FEEDBACK_ENDPOINT", DEFAULT_FEEDBACK_ENDPOINT)
     if not p.is_file():
         return {
             "tier": "auto",
             "host": DEFAULT_HOST,
             "port": DEFAULT_PORT,
             "idle_unload_seconds": 300,
-            "token": os.environ.get("FILAMENT_KIT_VISION_TOKEN", ""),
+            "token": os.environ.get("SPOOLWARDEN_VISION_TOKEN", ""),
             "feedback_opt_in": False,
             "feedback_endpoint": default_endpoint,
         }
@@ -83,7 +83,7 @@ def load_service_config(path: str | Path | None = None) -> dict[str, Any]:
             "host": root.attrib.get("host", DEFAULT_HOST),
             "port": int(root.attrib.get("port", str(DEFAULT_PORT))),
             "idle_unload_seconds": int(root.attrib.get("idle-unload-seconds", "300")),
-            "token": root.attrib.get("token", os.environ.get("FILAMENT_KIT_VISION_TOKEN", "")),
+            "token": root.attrib.get("token", os.environ.get("SPOOLWARDEN_VISION_TOKEN", "")),
             "feedback_opt_in": root.attrib.get("feedback-opt-in", "false").lower() == "true",
             "feedback_endpoint": root.attrib.get("feedback-endpoint", default_endpoint),
         }
@@ -93,7 +93,7 @@ def load_service_config(path: str | Path | None = None) -> dict[str, Any]:
             "host": DEFAULT_HOST,
             "port": DEFAULT_PORT,
             "idle_unload_seconds": 300,
-            "token": os.environ.get("FILAMENT_KIT_VISION_TOKEN", ""),
+            "token": os.environ.get("SPOOLWARDEN_VISION_TOKEN", ""),
             "feedback_opt_in": False,
             "feedback_endpoint": default_endpoint,
         }
@@ -328,7 +328,7 @@ class FilamentRecognizer:
         return IntakeReadResult(
             items=[item],
             tier="revise",
-            model_name="filament-kit-vision/revise",
+            model_name="spoolwarden-vision/revise",
             latency_ms=5.0,
         )
 
@@ -392,7 +392,7 @@ class _DaemonRequestHandler(BaseHTTPRequestHandler):
             fb_status = self.recognizer.feedback_queue.status()
 
             payload = {
-                "service": "filament-kit-vision",
+                "service": "spoolwarden-vision",
                 "api_version": API_VERSION,
                 "module_version": MODULE_VERSION,
                 "status": status_str,
@@ -688,7 +688,7 @@ def start_daemon(
     feedback_dir: str | Path | None = None,
     state_dir: str | Path | None = None,
 ) -> ThreadingHTTPServer:
-    """Create and return a configured ThreadingHTTPServer for filament-kit-vision."""
+    """Create and return a configured ThreadingHTTPServer for spoolwarden-vision."""
     recognizer = FilamentRecognizer(
         default_tier=tier,
         idle_unload_seconds=idle_unload_seconds,
@@ -738,7 +738,7 @@ def run_daemon_forever(
 
     t = threading.Thread(target=_sweeper, daemon=True)
     t.start()
-    print(f"[filament-kit-vision] Listening on http://{host}:{port} (tier={tier})")
+    print(f"[spoolwarden-vision] Listening on http://{host}:{port} (tier={tier})")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

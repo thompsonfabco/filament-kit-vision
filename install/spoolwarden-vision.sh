@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# filament-kit-vision verified Linux installer & uninstaller
+# spoolwarden-vision verified Linux installer & uninstaller
 # Usage:
-#   curl -sSL https://github.com/thompsonfabco/filament-kit-vision/releases/latest/download/filament-kit-vision.sh | bash -s -- --tier auto
-#   bash filament-kit-vision.sh --tier cpu --prefix /opt/filament-kit-vision --no-systemd
-#   bash filament-kit-vision.sh --uninstall [--purge]
+#   curl -sSL https://github.com/thompsonfabco/spoolwarden-vision/releases/latest/download/spoolwarden-vision.sh | bash -s -- --tier auto
+#   bash spoolwarden-vision.sh --tier cpu --prefix /opt/spoolwarden-vision --no-systemd
+#   bash spoolwarden-vision.sh --uninstall [--purge]
 
-REPO="thompsonfabco/filament-kit-vision"
+REPO="thompsonfabco/spoolwarden-vision"
 VERSION="latest"
 TIER="auto"
-PREFIX="/opt/filament-kit-vision"
+PREFIX="/opt/spoolwarden-vision"
 HOST="127.0.0.1"
 PORT="7915"
-INSTALL_USER="filament-kit"
+INSTALL_USER="spoolwarden"
 USER_SPECIFIED=0
 NO_SYSTEMD=0
 UNINSTALL=0
@@ -27,13 +27,13 @@ CREATED_PREFIX=0
 CREATED_UNIT=0
 CREATED_USER=0
 CREATED_GROUP=0
-SERVICE_NAME="filament-kit-vision"
+SERVICE_NAME="spoolwarden-vision"
 UNIT_FILE=""
 SYSTEMD_USER_FLAG=""
 
-log() { printf '[filament-kit-vision] %s\n' "$*"; }
-warn() { printf '[filament-kit-vision] WARNING: %s\n' "$*" >&2; }
-die() { printf '[filament-kit-vision] ERROR: %s\n' "$*" >&2; exit 1; }
+log() { printf '[spoolwarden-vision] %s\n' "$*"; }
+warn() { printf '[spoolwarden-vision] WARNING: %s\n' "$*" >&2; }
+die() { printf '[spoolwarden-vision] ERROR: %s\n' "$*" >&2; exit 1; }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -63,7 +63,7 @@ case "$TIER" in
 esac
 
 if [[ $EUID -eq 0 ]]; then
-  STATE_DIR="/var/lib/filament-kit-vision"
+  STATE_DIR="/var/lib/spoolwarden-vision"
   UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
   SYSTEMD_USER_FLAG=""
   INSTALL_GROUP="$INSTALL_USER"
@@ -72,11 +72,11 @@ else
     INSTALL_USER="$(id -un)"
   fi
   INSTALL_GROUP="$(id -gn "$INSTALL_USER" 2>/dev/null || echo "$INSTALL_USER")"
-  STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/filament-kit-vision"
+  STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/spoolwarden-vision"
   UNIT_FILE="${HOME}/.config/systemd/user/${SERVICE_NAME}.service"
   SYSTEMD_USER_FLAG="--user"
-  if [[ "$PREFIX" == "/opt/filament-kit-vision" ]]; then
-    PREFIX="${HOME}/.local/share/filament-kit-vision"
+  if [[ "$PREFIX" == "/opt/spoolwarden-vision" ]]; then
+    PREFIX="${HOME}/.local/share/spoolwarden-vision"
   fi
 fi
 
@@ -105,7 +105,7 @@ cleanup_created_identity() {
 }
 
 if [[ "$UNINSTALL" -eq 1 ]]; then
-  log "Uninstalling filament-kit-vision from ${PREFIX}..."
+  log "Uninstalling spoolwarden-vision from ${PREFIX}..."
   if command -v systemctl >/dev/null 2>&1; then
     systemctl $SYSTEMD_USER_FLAG stop "$SERVICE_NAME" 2>/dev/null || true
     systemctl $SYSTEMD_USER_FLAG disable "$SERVICE_NAME" 2>/dev/null || true
@@ -198,7 +198,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 pub_hex, sums_p, sig_p = sys.argv[1], sys.argv[2], sys.argv[3]
 pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub_hex))
 pub.verify(base64.b64decode(pathlib.Path(sig_p).read_bytes().strip()), pathlib.Path(sums_p).read_bytes())
-print("[filament-kit-vision] Ed25519 signature verified on SHA256SUMS.")
+print("[spoolwarden-vision] Ed25519 signature verified on SHA256SUMS.")
 PYEOF
 else
   warn "Embedded release public key placeholder detected; skipping Ed25519 check."
@@ -231,7 +231,7 @@ if [[ ! -d "$PREFIX" ]]; then
 fi
 mkdir -p "$PREFIX"
 
-PKG_TAR=$(echo "$ASSETS" | tr ' ' '\n' | grep '^filament-kit-vision-.*\.tar\.gz$' | head -n1)
+PKG_TAR=$(echo "$ASSETS" | tr ' ' '\n' | grep '^spoolwarden-vision-.*\.tar\.gz$' | head -n1)
 [[ -n "$PKG_TAR" ]] || die "Package tarball not found in manifest assets"
 tar -xzf "${BUNDLE_SRC}/${PKG_TAR}" -C "$PREFIX"
 
@@ -276,7 +276,7 @@ if [[ -d "${PREFIX}/data/feedback_queue" ]] && [[ -z "$(ls -A "${STATE_DIR}/feed
   log "Migrated legacy feedback_queue into external state dir ${STATE_DIR}."
 fi
 
-export FILAMENT_KIT_VISION_STATE_DIR="${STATE_DIR}"
+export SPOOLWARDEN_VISION_STATE_DIR="${STATE_DIR}"
 CFG_FILE="${STATE_DIR}/service_config.xml"
 if [[ ! -f "$CFG_FILE" ]]; then
   TOKEN=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
@@ -300,12 +300,12 @@ PYEOF
   chmod 600 "$CFG_FILE"
 else
   log "Preserving existing config, token, keys, and feedback queue in ${STATE_DIR}."
-  "${VENV_DIR}/bin/filament-kit-vision" config --tier "$TIER" --host "$HOST" --port "$PORT" >/dev/null
+  "${VENV_DIR}/bin/spoolwarden-vision" config --tier "$TIER" --host "$HOST" --port "$PORT" >/dev/null
   if [[ "$FEEDBACK_OPT_IN" == "true" ]]; then
-    "${VENV_DIR}/bin/filament-kit-vision" config --feedback-opt-in true >/dev/null
+    "${VENV_DIR}/bin/spoolwarden-vision" config --feedback-opt-in true >/dev/null
   fi
   if [[ -n "$FEEDBACK_ENDPOINT" ]]; then
-    "${VENV_DIR}/bin/filament-kit-vision" config --feedback-endpoint "$FEEDBACK_ENDPOINT" >/dev/null
+    "${VENV_DIR}/bin/spoolwarden-vision" config --feedback-endpoint "$FEEDBACK_ENDPOINT" >/dev/null
   fi
 fi
 
@@ -327,7 +327,7 @@ if [[ "$NO_SYSTEMD" -eq 0 ]] && command -v systemctl >/dev/null 2>&1; then
   if [[ $EUID -eq 0 ]]; then
     cat > "$UNIT_FILE" <<EOF
 [Unit]
-Description=filament-kit-vision Local Filament Label Recognition Daemon
+Description=spoolwarden-vision Local Filament Label Recognition Daemon
 After=network-online.target
 Wants=network-online.target
 
@@ -337,8 +337,8 @@ User=${INSTALL_USER}
 Group=${INSTALL_GROUP}
 WorkingDirectory=${PREFIX}
 Environment=PYTHONUNBUFFERED=1
-Environment=FILAMENT_KIT_VISION_STATE_DIR=${STATE_DIR}
-ExecStart=${VENV_DIR}/bin/filament-kit-vision serve --host ${HOST} --port ${PORT} --tier ${TIER}
+Environment=SPOOLWARDEN_VISION_STATE_DIR=${STATE_DIR}
+ExecStart=${VENV_DIR}/bin/spoolwarden-vision serve --host ${HOST} --port ${PORT} --tier ${TIER}
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
@@ -353,15 +353,15 @@ EOF
   else
     cat > "$UNIT_FILE" <<EOF
 [Unit]
-Description=filament-kit-vision Local Filament Label Recognition Daemon
+Description=spoolwarden-vision Local Filament Label Recognition Daemon
 After=network-online.target
 
 [Service]
 Type=simple
 WorkingDirectory=${PREFIX}
 Environment=PYTHONUNBUFFERED=1
-Environment=FILAMENT_KIT_VISION_STATE_DIR=${STATE_DIR}
-ExecStart=${VENV_DIR}/bin/filament-kit-vision serve --host ${HOST} --port ${PORT} --tier ${TIER}
+Environment=SPOOLWARDEN_VISION_STATE_DIR=${STATE_DIR}
+ExecStart=${VENV_DIR}/bin/spoolwarden-vision serve --host ${HOST} --port ${PORT} --tier ${TIER}
 Restart=on-failure
 RestartSec=3
 

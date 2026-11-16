@@ -1,4 +1,4 @@
-"""Command-line interface for filament-kit-vision (serve, predict, config, status, sync-catalog, train, benchmark)."""
+"""Command-line interface for spoolwarden-vision (serve, predict, config, status, sync-catalog, train, benchmark)."""
 from __future__ import annotations
 
 import argparse
@@ -24,7 +24,7 @@ from .updater import run_one_click_update
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="filament-kit-vision",
+        prog="spoolwarden-vision",
         description="Local dual-tier (CPU ONNX + GPU VLM) 3D printer filament recognition engine",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)

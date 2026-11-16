@@ -1,0 +1,23 @@
+[Unit]
+Description=spoolwarden-vision Local Filament Label Recognition Daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=spoolwarden
+Group=spoolwarden
+WorkingDirectory=/opt/spoolwarden-vision
+Environment=PYTHONUNBUFFERED=1
+Environment=SPOOLWARDEN_VISION_STATE_DIR=/var/lib/spoolwarden-vision
+ExecStart=/opt/spoolwarden-vision/.venv/bin/spoolwarden-vision serve --host 127.0.0.1 --port 7915 --tier auto
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/spoolwarden-vision
+
+[Install]
+WantedBy=multi-user.target

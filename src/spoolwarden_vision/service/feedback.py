@@ -244,7 +244,7 @@ def validate_feedback_zip_bytes(zip_bytes: bytes) -> dict[str, Any]:
 def _configured_pow_difficulty(override: int | None = None) -> int:
     if override is not None:
         return int(override)
-    env_val = os.environ.get("FILAMENT_KIT_VISION_POW_DIFFICULTY", "").strip()
+    env_val = os.environ.get("SPOOLWARDEN_VISION_POW_DIFFICULTY", "").strip()
     if env_val:
         return max(0, int(env_val))
     return DEFAULT_POW_DIFFICULTY
