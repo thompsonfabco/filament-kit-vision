@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=spoolwarden
-Group=spoolwarden
+User=spoolwarden-vision
+Group=spoolwarden-vision
 WorkingDirectory=/opt/spoolwarden-vision
 Environment=PYTHONUNBUFFERED=1
 Environment=SPOOLWARDEN_VISION_STATE_DIR=/var/lib/spoolwarden-vision

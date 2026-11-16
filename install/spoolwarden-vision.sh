@@ -13,7 +13,7 @@ TIER="auto"
 PREFIX="/opt/spoolwarden-vision"
 HOST="127.0.0.1"
 PORT="7915"
-INSTALL_USER="spoolwarden"
+INSTALL_USER="spoolwarden-vision"
 USER_SPECIFIED=0
 NO_SYSTEMD=0
 UNINSTALL=0
@@ -40,7 +40,7 @@ while [[ $# -gt 0 ]]; do
     --tier) TIER="${2:?}"; shift 2 ;;
     --version) VERSION="${2:?}"; shift 2 ;;
     --prefix) PREFIX="${2:?}"; shift 2 ;;
-    --host) HOST="${2:?}"; shift 2 ;;
+    --host|--bind) HOST="${2:?}"; shift 2 ;;
     --port) PORT="${2:?}"; shift 2 ;;
     --user) INSTALL_USER="${2:?}"; USER_SPECIFIED=1; shift 2 ;;
     --no-systemd) NO_SYSTEMD=1; shift ;;
