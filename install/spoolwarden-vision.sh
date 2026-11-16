@@ -64,7 +64,10 @@ esac
 
 if [[ $EUID -eq 0 ]]; then
   STATE_DIR="/var/lib/spoolwarden-vision"
+  LEGACY_STATE_DIR="/var/lib/filament-kit-vision"
+  LEGACY_PREFIX="/opt/filament-kit-vision"
   UNIT_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+  LEGACY_UNIT_FILE="/etc/systemd/system/filament-kit-vision.service"
   SYSTEMD_USER_FLAG=""
   INSTALL_GROUP="$INSTALL_USER"
 else
@@ -73,7 +76,10 @@ else
   fi
   INSTALL_GROUP="$(id -gn "$INSTALL_USER" 2>/dev/null || echo "$INSTALL_USER")"
   STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/spoolwarden-vision"
+  LEGACY_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/filament-kit-vision"
+  LEGACY_PREFIX="${HOME}/.local/share/filament-kit-vision"
   UNIT_FILE="${HOME}/.config/systemd/user/${SERVICE_NAME}.service"
+  LEGACY_UNIT_FILE="${HOME}/.config/systemd/user/filament-kit-vision.service"
   SYSTEMD_USER_FLAG="--user"
   if [[ "$PREFIX" == "/opt/spoolwarden-vision" ]]; then
     PREFIX="${HOME}/.local/share/spoolwarden-vision"
@@ -109,10 +115,15 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   if command -v systemctl >/dev/null 2>&1; then
     systemctl $SYSTEMD_USER_FLAG stop "$SERVICE_NAME" 2>/dev/null || true
     systemctl $SYSTEMD_USER_FLAG disable "$SERVICE_NAME" 2>/dev/null || true
-    rm -f "$UNIT_FILE"
+    systemctl $SYSTEMD_USER_FLAG stop "filament-kit-vision" 2>/dev/null || true
+    systemctl $SYSTEMD_USER_FLAG disable "filament-kit-vision" 2>/dev/null || true
+    rm -f "$UNIT_FILE" "$LEGACY_UNIT_FILE"
     systemctl $SYSTEMD_USER_FLAG daemon-reload 2>/dev/null || true
   fi
   rm -rf "$PREFIX"
+  if [[ -n "$LEGACY_PREFIX" && "$LEGACY_PREFIX" != "$PREFIX" && -d "$LEGACY_PREFIX" ]]; then
+    rm -rf "$LEGACY_PREFIX"
+  fi
 
   RM_U=0
   RM_G=0
@@ -127,6 +138,9 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   WAITING_COUNT="$(count_waiting_feedback)"
   if [[ "$PURGE" -eq 1 ]]; then
     rm -rf "$STATE_DIR"
+    if [[ -n "$LEGACY_STATE_DIR" && "$LEGACY_STATE_DIR" != "$STATE_DIR" && -d "$LEGACY_STATE_DIR" ]]; then
+      rm -rf "$LEGACY_STATE_DIR"
+    fi
     cleanup_created_identity "$RM_U" "$RM_G"
     log "Uninstalled and purged state directory (${STATE_DIR})."
   else
@@ -267,6 +281,30 @@ fi
 
 # Set up external state directory and migrate legacy configs/feedback if upgrading
 mkdir -p "${STATE_DIR}/feedback_queue"
+if [[ -n "$LEGACY_STATE_DIR" && "$LEGACY_STATE_DIR" != "$STATE_DIR" && -d "$LEGACY_STATE_DIR" ]]; then
+  for item in service_config.xml install_ed25519.pem install_ed25519.pub .installer_created_identity; do
+    if [[ ! -f "${STATE_DIR}/${item}" ]] && [[ -f "${LEGACY_STATE_DIR}/${item}" ]]; then
+      cp -a "${LEGACY_STATE_DIR}/${item}" "${STATE_DIR}/${item}"
+    fi
+  done
+  if [[ -d "${LEGACY_STATE_DIR}/feedback_queue" ]] && [[ -z "$(ls -A "${STATE_DIR}/feedback_queue" 2>/dev/null)" ]]; then
+    cp -a "${LEGACY_STATE_DIR}/feedback_queue/." "${STATE_DIR}/feedback_queue/" 2>/dev/null || true
+  fi
+  log "Migrated legacy filament-kit-vision state from ${LEGACY_STATE_DIR} into ${STATE_DIR}."
+fi
+if [[ -n "$LEGACY_PREFIX" && "$LEGACY_PREFIX" != "$PREFIX" && -d "$LEGACY_PREFIX" ]]; then
+  if [[ ! -f "${STATE_DIR}/service_config.xml" ]] && [[ -f "${LEGACY_PREFIX}/configs/service_config.xml" ]]; then
+    cp -f "${LEGACY_PREFIX}/configs/service_config.xml" "${STATE_DIR}/service_config.xml"
+  fi
+  if [[ -d "${LEGACY_PREFIX}/data/feedback_queue" ]] && [[ -z "$(ls -A "${STATE_DIR}/feedback_queue" 2>/dev/null)" ]]; then
+    cp -a "${LEGACY_PREFIX}/data/feedback_queue/." "${STATE_DIR}/feedback_queue/" 2>/dev/null || true
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl $SYSTEMD_USER_FLAG stop "filament-kit-vision" 2>/dev/null || true
+    systemctl $SYSTEMD_USER_FLAG disable "filament-kit-vision" 2>/dev/null || true
+    rm -f "$LEGACY_UNIT_FILE"
+  fi
+fi
 if [[ ! -f "${STATE_DIR}/service_config.xml" ]] && [[ -f "${PREFIX}/configs/service_config.xml" ]]; then
   cp -f "${PREFIX}/configs/service_config.xml" "${STATE_DIR}/service_config.xml"
   log "Migrated legacy service_config.xml into external state dir ${STATE_DIR}."
