@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spoolwarden-vision"
-version = "0.2.3"
+version = "0.2.4"
 description = "Local dual-tier (CPU ONNX + GPU VLM) 3D printer filament spool and box label recognition module for filament-kit and Spoolman"
 readme = "README.md"
 license = {text = "GPL-3.0-or-later"}

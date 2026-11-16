@@ -21,6 +21,8 @@ PURGE=0
 FEEDBACK_OPT_IN="false"
 FEEDBACK_ENDPOINT=""
 LOCAL_BUNDLE_DIR=""
+ASSETS_DIR=""
+DRY_RUN_ARGS=0
 PUBKEY_HEX="69d905c146629fbb1d8592757ddafdb0e9fc06d14816e8851eb9b67793b44cf5"
 
 CREATED_PREFIX=0
@@ -49,6 +51,8 @@ while [[ $# -gt 0 ]]; do
     --feedback-opt-in) FEEDBACK_OPT_IN="${2:?}"; shift 2 ;;
     --feedback-endpoint) FEEDBACK_ENDPOINT="${2:?}"; shift 2 ;;
     --local-bundle-dir) LOCAL_BUNDLE_DIR="${2:?}"; shift 2 ;;
+    --assets) ASSETS_DIR="${2:?}"; shift 2 ;;
+    --check-args) DRY_RUN_ARGS=1; shift ;;
     -h|--help)
       sed -n '3,10p' "$0"
       exit 0
@@ -61,6 +65,10 @@ case "$TIER" in
   auto|cpu|gpu) ;;
   *) die "Invalid --tier '$TIER' (must be auto, cpu, or gpu)" ;;
 esac
+
+if [[ "$DRY_RUN_ARGS" -eq 1 ]]; then
+  exit 0
+fi
 
 if [[ $EUID -eq 0 ]]; then
   STATE_DIR="/var/lib/spoolwarden-vision"
@@ -187,26 +195,39 @@ if [[ $EUID -eq 0 ]]; then
   fi
 fi
 
-# Resolve release base URL
-if [[ -n "$LOCAL_BUNDLE_DIR" ]]; then
-  BUNDLE_SRC="$LOCAL_BUNDLE_DIR"
-  log "Using local release bundle directory: ${BUNDLE_SRC}"
-else
-  if [[ "$VERSION" == "latest" ]]; then
-    BASE_URL="https://github.com/${REPO}/releases/latest/download"
-  else
-    BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
-  fi
-  BUNDLE_SRC="$TMP_WORK"
-  log "Fetching release manifest and signatures from ${BASE_URL}..."
-  curl -fsSL "${BASE_URL}/SHA256SUMS" -o "${TMP_WORK}/SHA256SUMS"
-  curl -fsSL "${BASE_URL}/SHA256SUMS.sig" -o "${TMP_WORK}/SHA256SUMS.sig"
-  curl -fsSL "${BASE_URL}/manifest.json" -o "${TMP_WORK}/manifest.json"
+# Create/upgrade prefix directory (preserve external STATE_DIR across upgrades)
+if [[ ! -d "$PREFIX" ]]; then
+  CREATED_PREFIX=1
 fi
+mkdir -p "$PREFIX"
 
-# Verify Ed25519 signature over SHA256SUMS when public key is embedded
-if [[ "$PUBKEY_HEX" != "REPLACE_WITH_RELEASE_ED25519_PUBLIC_KEY_HEX" ]]; then
-  python3 - "$PUBKEY_HEX" "${BUNDLE_SRC}/SHA256SUMS" "${BUNDLE_SRC}/SHA256SUMS.sig" <<'PYEOF'
+if [[ -n "$ASSETS_DIR" ]]; then
+  [[ -d "$ASSETS_DIR" ]] || die "Assets directory not found: ${ASSETS_DIR}"
+  SCRIPT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  log "Installing pre-verified source from ${SCRIPT_ROOT} and assets from ${ASSETS_DIR}..."
+  (cd "$SCRIPT_ROOT" && tar --exclude='.git' --exclude='.venv' --exclude='__pycache__' --exclude='release' -cf - .) | tar -xf - -C "$PREFIX"
+  ASSET_SRC="$ASSETS_DIR"
+else
+  # Resolve release base URL
+  if [[ -n "$LOCAL_BUNDLE_DIR" ]]; then
+    BUNDLE_SRC="$LOCAL_BUNDLE_DIR"
+    log "Using local release bundle directory: ${BUNDLE_SRC}"
+  else
+    if [[ "$VERSION" == "latest" ]]; then
+      BASE_URL="https://github.com/${REPO}/releases/latest/download"
+    else
+      BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+    fi
+    BUNDLE_SRC="$TMP_WORK"
+    log "Fetching release manifest and signatures from ${BASE_URL}..."
+    curl -fsSL "${BASE_URL}/SHA256SUMS" -o "${TMP_WORK}/SHA256SUMS"
+    curl -fsSL "${BASE_URL}/SHA256SUMS.sig" -o "${TMP_WORK}/SHA256SUMS.sig"
+    curl -fsSL "${BASE_URL}/manifest.json" -o "${TMP_WORK}/manifest.json"
+  fi
+
+  # Verify Ed25519 signature over SHA256SUMS when public key is embedded
+  if [[ "$PUBKEY_HEX" != "REPLACE_WITH_RELEASE_ED25519_PUBLIC_KEY_HEX" ]]; then
+    python3 - "$PUBKEY_HEX" "${BUNDLE_SRC}/SHA256SUMS" "${BUNDLE_SRC}/SHA256SUMS.sig" <<'PYEOF'
 import base64, sys, pathlib
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 pub_hex, sums_p, sig_p = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -214,57 +235,53 @@ pub = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub_hex))
 pub.verify(base64.b64decode(pathlib.Path(sig_p).read_bytes().strip()), pathlib.Path(sums_p).read_bytes())
 print("[spoolwarden-vision] Ed25519 signature verified on SHA256SUMS.")
 PYEOF
-else
-  warn "Embedded release public key placeholder detected; skipping Ed25519 check."
-fi
+  else
+    warn "Embedded release public key placeholder detected; skipping Ed25519 check."
+  fi
 
-# Determine assets for requested tier from manifest.json
-ASSETS=$(python3 - "${BUNDLE_SRC}/manifest.json" "$TIER" <<'PYEOF'
+  # Determine assets for requested tier from manifest.json
+  ASSETS=$(python3 - "${BUNDLE_SRC}/manifest.json" "$TIER" <<'PYEOF'
 import json, sys
 m = json.loads(open(sys.argv[1], encoding="utf-8").read())
 for a in m["tiers"][sys.argv[2]]["assets"]:
     print(a)
 PYEOF
-)
+  )
 
-if [[ -z "$LOCAL_BUNDLE_DIR" ]]; then
-  for asset in $ASSETS; do
-    log "Downloading ${asset}..."
-    curl -fsSL "${BASE_URL}/${asset}" -o "${BUNDLE_SRC}/${asset}"
-  done
+  if [[ -z "$LOCAL_BUNDLE_DIR" ]]; then
+    for asset in $ASSETS; do
+      log "Downloading ${asset}..."
+      curl -fsSL "${BASE_URL}/${asset}" -o "${BUNDLE_SRC}/${asset}"
+    done
+  fi
+
+  # Verify SHA-256 of every downloaded asset
+  (cd "$BUNDLE_SRC" && for asset in $ASSETS manifest.json; do
+    grep "  ${asset}\$" SHA256SUMS | sha256sum -c -
+  done)
+
+  PKG_TAR=$(echo "$ASSETS" | tr ' ' '\n' | grep '^spoolwarden-vision-.*\.tar\.gz$' | head -n1)
+  [[ -n "$PKG_TAR" ]] || die "Package tarball not found in manifest assets"
+  tar -xzf "${BUNDLE_SRC}/${PKG_TAR}" --strip-components=1 -C "$PREFIX"
+  ASSET_SRC="$BUNDLE_SRC"
 fi
-
-# Verify SHA-256 of every downloaded asset
-(cd "$BUNDLE_SRC" && for asset in $ASSETS manifest.json; do
-  grep "  ${asset}\$" SHA256SUMS | sha256sum -c -
-done)
-
-# Create/upgrade prefix directory (preserve external STATE_DIR across upgrades)
-if [[ ! -d "$PREFIX" ]]; then
-  CREATED_PREFIX=1
-fi
-mkdir -p "$PREFIX"
-
-PKG_TAR=$(echo "$ASSETS" | tr ' ' '\n' | grep '^spoolwarden-vision-.*\.tar\.gz$' | head -n1)
-[[ -n "$PKG_TAR" ]] || die "Package tarball not found in manifest assets"
-tar -xzf "${BUNDLE_SRC}/${PKG_TAR}" -C "$PREFIX"
 
 # Place CPU ONNX/parser assets
 mkdir -p "${PREFIX}/models/cpu"
-for f in rf_detr_n.onnx visual_classifier.onnx text_parser.npz; do
-  if [[ -f "${BUNDLE_SRC}/${f}" ]]; then
-    cp -f "${BUNDLE_SRC}/${f}" "${PREFIX}/models/cpu/${f}"
+for f in detector_rfdetr_n.onnx visual_multihead.onnx text_parser.npz; do
+  if [[ -f "${ASSET_SRC}/${f}" ]]; then
+    cp -f "${ASSET_SRC}/${f}" "${PREFIX}/models/cpu/${f}"
   fi
 done
 
 # Place GPU LoRA assets if downloaded
-if [[ -f "${BUNDLE_SRC}/qwen25_vl_7b_filament_lora.tar.gz" ]]; then
+if [[ -f "${ASSET_SRC}/qwen25_vl_7b_filament_lora.tar.gz" ]]; then
   mkdir -p "${PREFIX}/models/gpu"
-  tar -xzf "${BUNDLE_SRC}/qwen25_vl_7b_filament_lora.tar.gz" -C "${PREFIX}/models/gpu"
+  tar -xzf "${ASSET_SRC}/qwen25_vl_7b_filament_lora.tar.gz" -C "${PREFIX}/models/gpu"
 fi
-if [[ -f "${BUNDLE_SRC}/base-model.json" ]]; then
+if [[ -f "${ASSET_SRC}/base-model.json" ]]; then
   mkdir -p "${PREFIX}/models/gpu"
-  cp -f "${BUNDLE_SRC}/base-model.json" "${PREFIX}/models/gpu/base-model.json"
+  cp -f "${ASSET_SRC}/base-model.json" "${PREFIX}/models/gpu/base-model.json"
 fi
 
 # Create Python venv and install package
